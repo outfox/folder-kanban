@@ -1,72 +1,73 @@
 // Mock obsidian module for testing
-// This provides the minimal interface needed for tests
 
-export type BasesPropertyId = string;
-export type ViewOption = any;
-
-export interface TFile {
-	path: string;
-	name: string;
-	basename: string;
-	extension: string;
-	stat: {
-		size: number;
-		ctime: number;
-		mtime: number;
-	};
-	vault: any;
-	parent: any;
+export class TAbstractFile {
+	path = '';
+	name = '';
+	vault: any = {};
+	parent: any = null;
 }
 
-export interface BasesEntry {
-	file: TFile;
-	getValue(propertyId: BasesPropertyId): any;
-	getProperty(propertyId: BasesPropertyId): any;
+export class TFile extends TAbstractFile {
+	basename = '';
+	extension = '';
+	stat = { size: 0, ctime: 0, mtime: 0 };
 }
 
-export interface QueryController {
-	data: {
-		data: BasesEntry[];
-	};
-	allProperties: BasesPropertyId[];
-	config: {
-		getAsPropertyId(key: string): BasesPropertyId | null;
-		getOrder(): BasesPropertyId[];
-		getDisplayName(propertyId: BasesPropertyId): string;
-	};
-	app?: App;
+export class TFolder extends TAbstractFile {
+	children: (TFile | TFolder)[] = [];
+	isRoot(): boolean {
+		return false;
+	}
+}
+
+export interface Vault {
+	getAbstractFileByPath(path: string): TAbstractFile | null;
+	rename(file: TAbstractFile, newPath: string): Promise<void>;
+	on(event: string, callback: (...args: any[]) => void): { id: string };
+}
+
+export interface Workspace {
+	openLinkText(path: string, source: string, newLeaf: boolean): Promise<void>;
+	getLeavesOfType(type: string): any[];
+	getLeaf(type?: string): any;
+	revealLeaf(leaf: any): void;
 }
 
 export interface App {
-	workspace: {
-		openLinkText(path: string, source: string, newLeaf: boolean): void;
-	};
-	fileManager: {
-		processFrontMatter(file: TFile, fn: (frontmatter: any) => void | Promise<void>): Promise<void>;
-	};
+	vault: Vault;
+	workspace: Workspace;
 }
 
-export abstract class BasesView {
-	app?: App;
-	data?: {
-		data: BasesEntry[];
-	};
-	allProperties?: BasesPropertyId[];
-	config?: {
-		getAsPropertyId(key: string): BasesPropertyId | null;
-		getOrder(): BasesPropertyId[];
-		getDisplayName(propertyId: BasesPropertyId): string;
-	};
+export class ItemView {
+	leaf: any;
+	app: App;
+	contentEl: HTMLElement;
+	private _registeredEvents: any[] = [];
 
-	constructor(controller: QueryController) {
-		this.app = controller.app;
-		this.data = controller.data;
-		this.allProperties = controller.allProperties;
-		this.config = controller.config;
+	constructor(leaf: any) {
+		this.leaf = leaf;
+		this.app = leaf.app;
+		this.contentEl = document.createElement('div');
 	}
 
-	abstract onDataUpdated(): void;
-	onClose?(): void;
+	getViewType(): string {
+		return '';
+	}
+
+	getDisplayText(): string {
+		return '';
+	}
+
+	getIcon(): string {
+		return '';
+	}
+
+	async onOpen(): Promise<void> {}
+	async onClose(): Promise<void> {}
+
+	registerEvent(eventRef: any): void {
+		this._registeredEvents.push(eventRef);
+	}
 }
 
 export class Plugin {
@@ -81,44 +82,90 @@ export class Plugin {
 	async onload(): Promise<void> {}
 	onunload(): void {}
 
-	registerBasesView?(viewType: string, options: any): void {
-		// Mock implementation
+	registerView(_type: string, _factory: (leaf: any) => any): void {}
+	addSettingTab(_tab: any): void {}
+	addCommand(_command: any): void {}
+	addRibbonIcon(_icon: string, _title: string, _callback: () => void): HTMLElement {
+		return document.createElement('div');
 	}
+	async loadData(): Promise<any> {
+		return null;
+	}
+	async saveData(_data: any): Promise<void> {}
 }
 
-export class MarkdownRenderer {
-	static render(
-		_app: unknown,
-		markdown: string,
-		el: HTMLElement,
-		_sourcePath: string,
-		_component: unknown,
-	): Promise<void> {
-		const p = document.createElement('p');
-		p.innerHTML = markdown.replace(/\[\[([^\]]+)\]\]/g, (_, target: string) => {
-			const escaped = target.replace(/"/g, '&quot;');
-			return `<a class="internal-link" data-href="${escaped}" href="${escaped}">${target}</a>`;
-		});
-		el.appendChild(p);
-		return Promise.resolve();
+export class PluginSettingTab {
+	app: App;
+	plugin: Plugin;
+	containerEl: HTMLElement;
+
+	constructor(app: App, plugin: Plugin) {
+		this.app = app;
+		this.plugin = plugin;
+		this.containerEl = document.createElement('div');
 	}
+
+	display(): void {}
+	hide(): void {}
 }
 
-export class Keymap {
-	static isModEvent(evt?: { ctrlKey?: boolean; metaKey?: boolean } | null): boolean {
-		return !!(evt?.ctrlKey || evt?.metaKey);
-	}
-}
+export class Setting {
+	settingEl: HTMLElement;
+	private _name = '';
+	private _desc = '';
 
-export function parsePropertyId(propertyId: BasesPropertyId): { name: string; source?: string } {
-	const parts = propertyId.split('.');
-	if (parts.length > 1) {
-		return {
-			name: parts.slice(1).join('.'),
-			source: parts[0],
+	constructor(containerEl: HTMLElement) {
+		this.settingEl = document.createElement('div');
+		containerEl.appendChild(this.settingEl);
+	}
+
+	setName(name: string): this {
+		this._name = name;
+		return this;
+	}
+
+	setDesc(desc: string): this {
+		this._desc = desc;
+		return this;
+	}
+
+	addText(cb: (text: any) => void): this {
+		const text = {
+			_value: '',
+			_placeholder: '',
+			_onChange: null as any,
+			setPlaceholder(p: string) {
+				this._placeholder = p;
+				return this;
+			},
+			setValue(v: string) {
+				this._value = v;
+				return this;
+			},
+			onChange(fn: (value: string) => void) {
+				this._onChange = fn;
+				return this;
+			},
 		};
+		cb(text);
+		return this;
 	}
-	return {
-		name: propertyId,
-	};
+}
+
+export class Notice {
+	message: string;
+	constructor(message: string) {
+		this.message = message;
+	}
+}
+
+export class WorkspaceLeaf {
+	app: App;
+	view: any;
+
+	constructor(app: App) {
+		this.app = app;
+	}
+
+	async setViewState(_state: any): Promise<void> {}
 }

@@ -1,61 +1,63 @@
-import { Plugin } from 'obsidian';
-import { KanbanView, type LegacyData, isRecord, isColumnOrders, isColumnColors } from './kanbanView.ts';
+import { Plugin, type WorkspaceLeaf } from 'obsidian';
+import { FolderKanbanView } from './kanbanView.ts';
+import { FolderKanbanSettingTab } from './settingsTab.ts';
+import type { PersistedState } from './types.ts';
+import { DEFAULT_STATE } from './types.ts';
 
-export const KANBAN_VIEW_TYPE = 'kanban-view';
+export const VIEW_TYPE_FOLDER_KANBAN = 'folder-kanban-view';
 
-/**
- * Reads column order and color data previously stored in plugin.data.json
- * (via Obsidian's Plugin.saveData API) and normalises it into LegacyData.
- *
- * Column state is now persisted per-base using BasesViewConfig.set/get, so
- * plugin.data.json is no longer written to. This function is the bridge that
- * lets existing users keep their configuration when upgrading.
- *
- * Two historical shapes are handled:
- *   - Current:  { columnOrders: { [propertyId]: string[] }, columnColors: { [propertyId]: { [value]: color } } }
- *   - Pre-v0.1: { [propertyId]: string[] }  (columnOrders only, no color support)
- */
-function parseLegacyData(data: unknown): LegacyData | null {
-	if (!isRecord(data)) return null;
+export default class FolderKanbanPlugin extends Plugin {
+	state: PersistedState = { ...DEFAULT_STATE };
 
-	// Current on-disk format: { columnOrders: {...}, columnColors: {...} }
-	if ('columnOrders' in data && isColumnOrders(data.columnOrders)) {
-		return {
-			columnOrders: data.columnOrders,
-			columnColors: isColumnColors(data.columnColors) ? data.columnColors : {},
-		};
-	}
-
-	// Pre-migration format: { 'note.status': ['To Do', ...], ... }
-	if (isColumnOrders(data)) {
-		return {
-			columnOrders: data,
-			columnColors: {},
-		};
-	}
-
-	return null;
-}
-
-export default class KanbanBasesViewPlugin extends Plugin {
 	async onload() {
-		// Read any data previously saved to plugin.data.json and pass it to each
-		// view instance so it can lazily migrate state into the base config on
-		// first render. Once migrated, plugin.data.json is no longer consulted.
-		const raw: unknown = await this.loadData();
-		const legacyData = parseLegacyData(raw);
+		await this.loadSettings();
 
-		this.registerBasesView(KANBAN_VIEW_TYPE, {
-			name: 'Kanban',
-			icon: 'columns',
-			factory: (controller, scrollEl) => {
-				return new KanbanView(controller, scrollEl, legacyData);
+		this.registerView(VIEW_TYPE_FOLDER_KANBAN, (leaf: WorkspaceLeaf) => new FolderKanbanView(leaf, this));
+
+		this.addSettingTab(new FolderKanbanSettingTab(this));
+
+		this.addCommand({
+			id: 'open-folder-kanban',
+			name: 'Open folder kanban',
+			callback: () => {
+				void this.activateView();
 			},
-			options: KanbanView.getViewOptions,
+		});
+
+		this.addRibbonIcon('columns-3', 'Folder kanban', () => {
+			void this.activateView();
 		});
 	}
 
-	onunload() {
-		// Cleanup if needed
+	async loadSettings(): Promise<void> {
+		// eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- loadData() returns `any`
+		const raw = (await this.loadData()) as PersistedState | null;
+		if (raw) {
+			this.state = { ...DEFAULT_STATE, ...raw };
+			this.state.settings = { ...DEFAULT_STATE.settings, ...raw.settings };
+		}
+	}
+
+	async saveSettings(): Promise<void> {
+		await this.saveData(this.state);
+	}
+
+	refreshViews(): void {
+		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_FOLDER_KANBAN)) {
+			if (leaf.view instanceof FolderKanbanView) {
+				leaf.view.refresh();
+			}
+		}
+	}
+
+	async activateView(): Promise<void> {
+		const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE_FOLDER_KANBAN);
+		if (existing.length > 0) {
+			await this.app.workspace.revealLeaf(existing[0]);
+			return;
+		}
+		const leaf = this.app.workspace.getLeaf('tab');
+		await leaf.setViewState({ type: VIEW_TYPE_FOLDER_KANBAN, active: true });
+		await this.app.workspace.revealLeaf(leaf);
 	}
 }

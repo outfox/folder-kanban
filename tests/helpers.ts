@@ -1,8 +1,10 @@
 import { JSDOM } from 'jsdom';
 import { mock } from 'node:test';
-import type { BasesEntry, BasesPropertyId, TFile, App, QueryController } from 'obsidian';
-import type Sortable from 'sortablejs';
+import { TFile, TFolder } from 'obsidian';
+import type { App } from 'obsidian';
 import { DEBOUNCE_DELAY } from '../src/constants.ts';
+import type { PersistedState } from '../src/types.ts';
+import { DEFAULT_STATE } from '../src/types.ts';
 
 // Setup jsdom environment
 const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
@@ -11,12 +13,10 @@ const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
 	resources: 'usable',
 });
 
-// Make DOM globals available
 (global as any).window = dom.window;
 (global as any).document = dom.window.document;
 (global as any).HTMLElement = dom.window.HTMLElement;
 (global as any).HTMLDivElement = dom.window.HTMLDivElement;
-(global as any).HTMLAnchorElement = dom.window.HTMLAnchorElement;
 (global as any).Element = dom.window.Element;
 (global as any).MouseEvent = dom.window.MouseEvent;
 
@@ -26,12 +26,8 @@ const HTMLElementProto = dom.window.HTMLElement.prototype as any;
 if (!HTMLElementProto.createDiv) {
 	HTMLElementProto.createDiv = function (options?: { cls?: string; text?: string }): HTMLElement {
 		const child = document.createElement('div');
-		if (options?.cls) {
-			child.className = options.cls;
-		}
-		if (options?.text) {
-			child.textContent = options.text;
-		}
+		if (options?.cls) child.className = options.cls;
+		if (options?.text) child.textContent = options.text;
 		this.appendChild(child);
 		return child;
 	};
@@ -40,12 +36,8 @@ if (!HTMLElementProto.createDiv) {
 if (!HTMLElementProto.createSpan) {
 	HTMLElementProto.createSpan = function (options?: { text?: string; cls?: string }): HTMLElement {
 		const span = document.createElement('span');
-		if (options?.text) {
-			span.textContent = options.text;
-		}
-		if (options?.cls) {
-			span.className = options.cls;
-		}
+		if (options?.text) span.textContent = options.text;
+		if (options?.cls) span.className = options.cls;
 		this.appendChild(span);
 		return span;
 	};
@@ -54,131 +46,56 @@ if (!HTMLElementProto.createSpan) {
 if (!HTMLElementProto.createEl) {
 	HTMLElementProto.createEl = function (tag: string, options?: { cls?: string; text?: string }): HTMLElement {
 		const el = document.createElement(tag);
-		if (options?.cls) {
-			el.className = options.cls;
-		}
-		if (options?.text) {
-			el.textContent = options.text;
-		}
+		if (options?.cls) el.className = options.cls;
+		if (options?.text) el.textContent = options.text;
 		this.appendChild(el);
 		return el;
 	};
 }
 
-// Obsidian adds a delegated event helper: element.on(event, selector, callback)
-if (!HTMLElementProto.on) {
-	HTMLElementProto.on = function (
-		event: string,
-		selector: string,
-		callback: (evt: Event, delegateTarget: HTMLElement) => void,
-	): void {
-		const container = this as HTMLElement;
-		container.addEventListener(event, (evt: Event) => {
-			let target = evt.target as HTMLElement | null;
-			while (target && target !== container) {
-				if (target.matches && target.matches(selector)) {
-					callback(evt, target);
-					return;
-				}
-				target = target.parentElement;
-			}
-		});
-	};
-}
-
 if (!HTMLElementProto.empty) {
 	HTMLElementProto.empty = function (): void {
-		while (this.firstChild) {
-			this.removeChild(this.firstChild);
-		}
+		while (this.firstChild) this.removeChild(this.firstChild);
 	};
 }
 
-// Mock TFile
-export function createMockTFile(path: string, basename?: string): TFile {
-	return {
-		path,
-		name: path.split('/').pop() || path,
-		basename:
-			basename ||
-			path
-				.split('/')
-				.pop()
-				?.replace(/\.[^/.]+$/, '') ||
-			path,
-		extension: path.split('.').pop() || '',
-		stat: {
-			size: 100,
-			ctime: Date.now(),
-			mtime: Date.now(),
-		},
-		vault: {} as any,
-		parent: null,
-	} as TFile;
+if (!HTMLElementProto.addClass) {
+	HTMLElementProto.addClass = function (cls: string): void {
+		this.classList.add(cls);
+	};
 }
 
-// Mock BasesEntry
-export function createMockBasesEntry(file: TFile, properties: Record<string, any> = {}): BasesEntry {
-	const entry = {
-		file,
-		getValue: (propertyId: BasesPropertyId) => {
-			const value = properties[propertyId] ?? null;
-			if (value === null) return null;
-
-			// Return a mock Value object to match Obsidian Bases API
-			// We only use toString() in our code, but include other required methods for type compatibility
-			return {
-				toString: () => String(value),
-				isTruthy: () => !!value,
-				equals: () => false, // Stub implementation
-				looseEquals: () => false, // Stub implementation
-				renderTo: () => {}, // Stub implementation
-			} as any; // Cast to any to satisfy Value interface requirements
-		},
-		getProperty: (propertyId: BasesPropertyId) => {
-			return properties[propertyId] ?? null;
-		},
-	} as BasesEntry;
-
-	return entry;
+if (!HTMLElementProto.removeClass) {
+	HTMLElementProto.removeClass = function (cls: string): void {
+		this.classList.remove(cls);
+	};
 }
 
-// Mock QueryController
-export function createMockQueryController(
-	entries: BasesEntry[] = [],
-	properties: BasesPropertyId[] = [],
-): QueryController {
-	const configData: Record<string, unknown> = {};
-	const controller = {
-		data: {
-			data: entries,
-		},
-		allProperties: properties,
-		config: {
-			getAsPropertyId: (_key: string): BasesPropertyId | null => null,
-			getOrder: (): string[] => [],
-			getDisplayName: (propertyId: string): string => propertyId,
-			get: (key: string): unknown => configData[key] ?? null,
-			set: (key: string, value: unknown): void => {
-				if (value === null) {
-					delete configData[key];
-				} else {
-					configData[key] = value;
-				}
-			},
-		},
-	} as unknown as QueryController;
-	return controller;
+export function createMockTFile(path: string): TFile {
+	const name = path.split('/').pop() || path;
+	const file = new TFile();
+	file.path = path;
+	file.name = name;
+	file.basename = name.replace(/\.[^/.]+$/, '');
+	file.extension = name.split('.').pop() || '';
+	file.stat = { size: 100, ctime: Date.now(), mtime: Date.now() };
+	return file;
 }
 
-// Mock function type
+export function createMockTFolder(path: string, children: (TFile | TFolder)[] = []): TFolder {
+	const folder = new TFolder();
+	folder.path = path;
+	folder.name = path.split('/').pop() || path;
+	folder.children = children;
+	return folder;
+}
+
 export interface MockFn {
 	(...args: any[]): any;
 	calls: any[][];
 	reset(): void;
 }
 
-// Create a mock function
 export function createMockFn(): MockFn {
 	const calls: any[][] = [];
 	const fn = function (...args: any[]) {
@@ -192,104 +109,95 @@ export function createMockFn(): MockFn {
 	return fn;
 }
 
-// Mock App
-export function createMockApp(): App & {
-	workspace: { openLinkText: MockFn };
-	fileManager: { processFrontMatter: MockFn };
-} {
-	const openLinkText = createMockFn();
-	const processFrontMatter = createMockFn();
+export function createMockVault(fileTree: Map<string, TFile | TFolder> = new Map()) {
+	const renameFn = createMockFn();
+	const eventHandlers = new Map<string, ((...args: any[]) => void)[]>();
 
 	return {
-		workspace: {
-			openLinkText,
-		} as any,
-		fileManager: {
-			processFrontMatter,
-		} as any,
+		getAbstractFileByPath: (path: string) => fileTree.get(path) ?? null,
+		rename: renameFn as any,
+		on: (event: string, callback: (...args: any[]) => void) => {
+			if (!eventHandlers.has(event)) eventHandlers.set(event, []);
+			eventHandlers.get(event)!.push(callback);
+			return { id: `${event}-${Date.now()}` };
+		},
+		renameFn,
+		eventHandlers,
 	} as any;
 }
 
-// Mock Sortable
-export class MockSortable {
-	public destroyed = false;
-	public options: any;
-	public element: HTMLElement;
-
-	constructor(element: HTMLElement, options: any) {
-		this.element = element;
-		this.options = options;
-	}
-
-	destroy(): void {
-		this.destroyed = true;
-	}
-}
-
-// Mock Sortable module
-export function mockSortable() {
-	const instances: MockSortable[] = [];
-
-	const SortableConstructor = (element: HTMLElement, options: any) => {
-		const instance = new MockSortable(element, options);
-		instances.push(instance);
-		return instance as any;
-	};
-
+export function createMockApp(vault?: any) {
+	const v = vault ?? createMockVault();
+	const openLinkText = createMockFn();
 	return {
-		Sortable: SortableConstructor,
-		instances,
-		getInstances: () => {
-			return instances;
+		vault: v,
+		workspace: {
+			openLinkText,
+			getLeavesOfType: (): any[] => [],
+			getLeaf: () => ({ setViewState: async () => {} }),
+			revealLeaf: () => {},
 		},
-	};
+	} as any;
 }
 
-// Helper to create DOM element (Obsidian methods are now on prototype)
-export function createDivWithMethods(parent?: HTMLElement): HTMLElement {
-	const div = document.createElement('div');
-	if (parent) {
-		parent.appendChild(div);
-	}
-	return div;
+export function createMockLeaf(app?: App): any {
+	const a = app ?? createMockApp();
+	return { app: a };
 }
 
-// Helper to simulate drag and drop event
-export function createMockSortableEvent(
-	item: HTMLElement,
-	from: HTMLElement,
-	to: HTMLElement,
-	oldIndex: number = 0,
-	newIndex: number = 0,
-): any {
+export function createMockPlugin(state?: Partial<PersistedState>, app?: App): any {
+	const a = app ?? createMockApp();
+	const s = { ...DEFAULT_STATE, ...state, settings: { ...DEFAULT_STATE.settings, ...(state?.settings ?? {}) } };
 	return {
-		item,
-		from,
-		to,
-		oldIndex,
-		newIndex,
+		app: a,
+		state: s,
+		saveSettings: createMockFn(),
+		refreshViews: () => {},
 	};
 }
 
-// Helper to find closest element
-export function addClosestPolyfill(element: HTMLElement): void {
-	if (!element.closest) {
-		element.closest = function (selector: string): HTMLElement | null {
-			let el: HTMLElement | null = this;
-			while (el) {
-				if (el.matches && el.matches(selector)) {
-					return el;
-				}
-				el = el.parentElement;
-			}
-			return null;
-		};
+/** Build a file tree for testing: root folder with subfolders containing .md files. */
+export function buildFileTree(
+	rootPath: string,
+	subfolders: Record<string, string[]>,
+	rootFiles: string[] = [],
+): Map<string, TFile | TFolder> {
+	const tree = new Map<string, TFile | TFolder>();
+
+	const rootChildren: (TFile | TFolder)[] = [];
+
+	// Root-level .md files
+	for (const fileName of rootFiles) {
+		const filePath = `${rootPath}/${fileName}`;
+		const file = createMockTFile(filePath);
+		tree.set(filePath, file);
+		rootChildren.push(file);
 	}
+
+	// Subfolders
+	for (const [folderName, files] of Object.entries(subfolders)) {
+		const folderPath = `${rootPath}/${folderName}`;
+		const folderChildren: TFile[] = [];
+
+		for (const fileName of files) {
+			const filePath = `${folderPath}/${fileName}`;
+			const file = createMockTFile(filePath);
+			tree.set(filePath, file);
+			folderChildren.push(file);
+		}
+
+		const folder = createMockTFolder(folderPath, folderChildren);
+		tree.set(folderPath, folder);
+		rootChildren.push(folder);
+	}
+
+	const rootFolder = createMockTFolder(rootPath, rootChildren);
+	tree.set(rootPath, rootFolder);
+
+	return tree;
 }
 
-// Setup function to initialize test environment
 export function setupTestEnvironment(): void {
-	// DOM is already set up at module level, but ensure it's available
 	if (typeof document === 'undefined') {
 		const newDom = new JSDOM('<!DOCTYPE html><html><body></body></html>');
 		(global as any).document = newDom.window.document;
@@ -298,32 +206,26 @@ export function setupTestEnvironment(): void {
 	}
 }
 
-// Helper to set up KanbanView with app access
-export function setupKanbanViewWithApp(view: any, app: App): void {
-	// BasesView has an app property that needs to be set
-	(view as any).app = app;
+export function createDivWithMethods(): HTMLElement {
+	return document.createElement('div');
 }
 
-// Helper to create a fully set up KanbanView (for convenience in tests)
-// Note: KanbanView should be imported dynamically in test files using dynamic import
-export function createKanbanViewWithApp(
-	KanbanView: any,
-	controller: QueryController,
-	scrollEl: HTMLElement,
-	app: App,
+export function createMockSortableEvent(
+	item: HTMLElement,
+	from: HTMLElement,
+	to: HTMLElement,
+	oldIndex: number = 0,
+	newIndex: number = 0,
 ): any {
-	const view = new KanbanView(controller, scrollEl);
-	setupKanbanViewWithApp(view, app);
-	return view;
+	return { item, from, to, oldIndex, newIndex };
 }
 
 /**
- * Triggers a data update on a KanbanView and synchronously flushes the debounce
- * timer so tests can assert on DOM state immediately.
+ * Triggers a refresh on a FolderKanbanView and synchronously flushes the debounce.
  */
-export function triggerDataUpdate(view: any): void {
+export function triggerRefresh(view: any): void {
 	mock.timers.enable({ apis: ['setTimeout'] });
-	view.onDataUpdated();
+	view.refresh();
 	mock.timers.tick(DEBOUNCE_DELAY);
 	mock.timers.reset();
 }

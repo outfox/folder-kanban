@@ -1,386 +1,107 @@
-import { test, describe, beforeEach } from 'node:test';
+import { test, describe } from 'node:test';
 import assert from 'node:assert';
-import { KanbanView } from '../src/kanbanView.ts';
+import { FolderKanbanView } from '../src/kanbanView.ts';
+import { CSS_CLASSES, DATA_ATTRIBUTES, UNSORTED_LABEL } from '../src/constants.ts';
 import {
 	setupTestEnvironment,
-	createDivWithMethods,
-	createMockQueryController,
 	createMockApp,
-	mockSortable,
-	addClosestPolyfill,
-	createMockBasesEntry,
-	createMockTFile,
-	setupKanbanViewWithApp,
-	triggerDataUpdate,
+	createMockVault,
+	createMockPlugin,
+	createMockLeaf,
+	createMockSortableEvent,
 } from './helpers.ts';
-import {
-	createEntriesWithStatus,
-	createEntriesWithMixedProperties,
-	PROPERTY_STATUS,
-	PROPERTY_PRIORITY,
-	TEST_PROPERTIES,
-} from './fixtures.ts';
+import { createStandardFileTree, createFileTreeWithUnsorted } from './fixtures.ts';
 
 setupTestEnvironment();
 
-describe('Integration Tests - Full Workflow', () => {
-	let scrollEl: HTMLElement;
-	let controller: any;
-	let app: any;
-	let sortableMock: any;
+async function openView(rootFolder: string, fileTree: Map<string, any>, extraState: Record<string, any> = {}) {
+	const vault = createMockVault(fileTree);
+	const app = createMockApp(vault);
+	const plugin = createMockPlugin({ settings: { rootFolder }, ...extraState }, app as any);
+	const leaf = createMockLeaf(app as any);
+	const view = new FolderKanbanView(leaf, plugin);
+	await view.onOpen();
+	return { view, plugin, vault, app };
+}
 
-	beforeEach(() => {
-		scrollEl = createDivWithMethods();
-		app = createMockApp();
-		sortableMock = mockSortable();
-		(global as any).Sortable = sortableMock.Sortable;
-		addClosestPolyfill(document.createElement('div'));
+describe('Integration: Card click opens note', () => {
+	test('clicking a card calls workspace.openLinkText', async () => {
+		const tree = createStandardFileTree();
+		const { view, app } = await openView('Board', tree);
+
+		const card = view.contentEl.querySelector(`.${CSS_CLASSES.CARD}`) as HTMLElement;
+		assert.ok(card);
+
+		card.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+		const openFn = (app.workspace as any).openLinkText;
+		assert.strictEqual(openFn.calls.length, 1, 'openLinkText should be called once');
 	});
+});
 
-	test('Complete kanban workflow', async () => {
-		// Initialize view with mock data
-		const entries = createEntriesWithStatus();
-		controller = createMockQueryController(entries, TEST_PROPERTIES);
-		controller.app = app;
-		controller.config.getAsPropertyId = () => PROPERTY_STATUS;
+describe('Integration: Drag-drop same column reorder', () => {
+	test('same-column drop updates card orders', async () => {
+		const tree = createStandardFileTree();
+		const { view, plugin } = await openView('Board', tree);
 
-		const view = new KanbanView(controller, scrollEl);
-		setupKanbanViewWithApp(view, app);
-		triggerDataUpdate(view);
-
-		// Verify board is rendered with multiple columns
-		const board = view.containerEl.querySelector('.obk-board');
-		assert.ok(board, 'Board should be rendered');
-
-		const columns = view.containerEl.querySelectorAll('.obk-column');
-		assert.ok(columns.length >= 2, 'Should have multiple columns');
-
-		// Verify entries are in correct columns
-		const toDoColumn = Array.from(columns).find((col) => col.getAttribute('data-column-value')?.includes('To Do'));
-		assert.ok(toDoColumn, 'To Do column should exist');
-		const toDoCards = toDoColumn?.querySelectorAll('.obk-card');
-		assert.strictEqual(toDoCards?.length, 2, 'To Do should have 2 cards');
-
-		// Simulate drag-and-drop operation
-		const doingColumn = Array.from(columns).find((col) =>
-			col.getAttribute('data-column-value')?.includes('Doing'),
+		const columns = view.contentEl.querySelectorAll(`.${CSS_CLASSES.COLUMN}`);
+		const todoCol = Array.from(columns).find(
+			(c) => c.getAttribute(DATA_ATTRIBUTES.COLUMN_VALUE) === 'Todo',
 		) as HTMLElement;
-		assert.ok(doingColumn, 'Doing column should exist');
+		assert.ok(todoCol);
+		const body = todoCol.querySelector(`.${CSS_CLASSES.COLUMN_BODY}`) as HTMLElement;
+		assert.ok(body);
 
-		const card = toDoColumn?.querySelector('.obk-card') as HTMLElement;
-		const entryPath = card.getAttribute('data-entry-path');
-		const toDoBody = toDoColumn?.querySelector('.obk-column-body') as HTMLElement;
-		const doingBody = doingColumn.querySelector('.obk-column-body') as HTMLElement;
+		const cards = body.querySelectorAll(`.${CSS_CLASSES.CARD}`);
+		assert.ok(cards.length >= 2);
 
-		const mockEvent = {
-			item: card,
-			from: toDoBody,
-			to: doingBody,
-			oldIndex: 0,
-			newIndex: 0,
-		};
+		const evt = createMockSortableEvent(cards[0] as HTMLElement, body, body);
+		await (view as any).handleCardDrop(evt);
 
-		// Perform drop
-		await (view as any).handleCardDrop(mockEvent);
-
-		// Verify property is updated
-		assert.strictEqual(app.fileManager.processFrontMatter.calls.length, 1, 'processFrontMatter should be called');
-
-		// Verify the call arguments
-		const callArgs = app.fileManager.processFrontMatter.calls[0];
-		assert.ok(callArgs, 'processFrontMatter should have been called');
-
-		// The first argument should be the file
-		const fileArg = callArgs[0];
-		assert.ok(fileArg, 'File should be passed to processFrontMatter');
-	});
-
-	test('View updates automatically after property change', async () => {
-		const entries = createEntriesWithStatus();
-		controller = createMockQueryController(entries, TEST_PROPERTIES);
-		controller.app = app;
-		controller.config.getAsPropertyId = () => PROPERTY_STATUS;
-
-		const view = new KanbanView(controller, scrollEl);
-		setupKanbanViewWithApp(view, app);
-		triggerDataUpdate(view);
-
-		// Get initial state
-		const initialColumns = view.containerEl.querySelectorAll('.obk-column');
-		const toDoColumn = Array.from(initialColumns).find((col) => col.getAttribute('data-column-value')?.includes('To Do'));
-		const initialToDoCount = toDoColumn?.querySelectorAll('.obk-card').length || 0;
-
-		// Simulate property update by modifying entry data
-		// In a real scenario, this would happen via file system change
-		// For testing, we'll simulate by updating the entry's property value
-		const entry = entries[0];
-		(entry as any).getValue = (propId: string) => {
-			if (propId === PROPERTY_STATUS) {
-				return 'Doing'; // Changed from 'To Do'
-			}
-			return null;
-		};
-
-		// Trigger data update
-		triggerDataUpdate(view);
-
-		// Verify view re-rendered
-		const updatedColumns = view.containerEl.querySelectorAll('.obk-column');
-		const updatedToDoColumn = Array.from(updatedColumns).find((col) =>
-			col.getAttribute('data-column-value')?.includes('To Do'),
-		);
-		const updatedToDoCount = updatedToDoColumn?.querySelectorAll('.obk-card').length || 0;
-
-		// To Do should have one less card
-		assert.strictEqual(updatedToDoCount, initialToDoCount - 1, 'To Do column should have one less card after update');
+		assert.ok(plugin.saveSettings.calls.length > 0, 'saveSettings should be called');
 	});
 });
 
-describe('Integration Tests - Property Selection', () => {
-	let scrollEl: HTMLElement;
-	let controller: any;
-	let app: any;
-	let sortableMock: any;
+describe('Integration: Cross-column drag moves file', () => {
+	test('cross-column drop calls vault.rename', async () => {
+		const tree = createStandardFileTree();
+		const { view, vault } = await openView('Board', tree);
 
-	beforeEach(() => {
-		scrollEl = createDivWithMethods();
-		app = createMockApp();
-		sortableMock = mockSortable();
-		(global as any).Sortable = sortableMock.Sortable;
-	});
+		const columns = view.contentEl.querySelectorAll(`.${CSS_CLASSES.COLUMN}`);
+		const todoCol = Array.from(columns).find(
+			(c) => c.getAttribute(DATA_ATTRIBUTES.COLUMN_VALUE) === 'Todo',
+		) as HTMLElement;
+		const doingCol = Array.from(columns).find(
+			(c) => c.getAttribute(DATA_ATTRIBUTES.COLUMN_VALUE) === 'Doing',
+		) as HTMLElement;
 
-	test('Changing group by property updates view', () => {
-		const entries = createEntriesWithMixedProperties();
-		controller = createMockQueryController(entries, TEST_PROPERTIES);
-		controller.app = app;
+		const todoBody = todoCol.querySelector(`.${CSS_CLASSES.COLUMN_BODY}`) as HTMLElement;
+		const doingBody = doingCol.querySelector(`.${CSS_CLASSES.COLUMN_BODY}`) as HTMLElement;
 
-		const view = new KanbanView(controller, scrollEl);
+		const card = todoBody.querySelector(`.${CSS_CLASSES.CARD}`) as HTMLElement;
+		assert.ok(card);
 
-		// First, use STATUS property
-		controller.config.getAsPropertyId = () => PROPERTY_STATUS;
-		triggerDataUpdate(view);
+		doingBody.appendChild(card);
 
-		const statusColumns = view.containerEl.querySelectorAll('.obk-column');
-		const statusColumnValues = Array.from(statusColumns).map((col) => col.getAttribute('data-column-value'));
+		const evt = createMockSortableEvent(card, todoBody, doingBody);
+		await (view as any).handleCardDrop(evt);
 
-		// Verify STATUS-based columns exist
-		assert.ok(
-			statusColumnValues.some((val) => val?.includes('To Do')),
-			'Should have To Do column based on STATUS',
-		);
-		assert.ok(
-			statusColumnValues.some((val) => val?.includes('Doing')),
-			'Should have Doing column based on STATUS',
-		);
-
-		// Now change to PRIORITY property
-		controller.config.getAsPropertyId = () => PROPERTY_PRIORITY;
-		triggerDataUpdate(view);
-
-		const priorityColumns = view.containerEl.querySelectorAll('.obk-column');
-		const priorityColumnValues = Array.from(priorityColumns).map((col) => col.getAttribute('data-column-value'));
-
-		// Verify PRIORITY-based columns exist
-		assert.ok(
-			priorityColumnValues.some((val) => val?.includes('High')),
-			'Should have High column based on PRIORITY',
-		);
-		assert.ok(
-			priorityColumnValues.some((val) => val?.includes('Medium')),
-			'Should have Medium column based on PRIORITY',
-		);
-		assert.ok(
-			priorityColumnValues.some((val) => val?.includes('Low')),
-			'Should have Low column based on PRIORITY',
-		);
-
-		// Verify entries are regrouped correctly
-		const allCards = view.containerEl.querySelectorAll('.obk-card');
-		assert.strictEqual(allCards.length, entries.length, 'All entries should be present');
-	});
-
-	test('Entries are regrouped correctly when property changes', () => {
-		const entries = createEntriesWithMixedProperties();
-		controller = createMockQueryController(entries, TEST_PROPERTIES);
-		controller.app = app;
-
-		const view = new KanbanView(controller, scrollEl);
-
-		// Use STATUS property
-		controller.config.getAsPropertyId = () => PROPERTY_STATUS;
-		triggerDataUpdate(view);
-
-		const statusCards = view.containerEl.querySelectorAll('.obk-card');
-		const statusCardCount = statusCards.length;
-
-		// Change to PRIORITY property
-		controller.config.getAsPropertyId = () => PROPERTY_PRIORITY;
-		triggerDataUpdate(view);
-
-		const priorityCards = view.containerEl.querySelectorAll('.obk-card');
-		const priorityCardCount = priorityCards.length;
-
-		// Card count should remain the same (all entries should still be present)
-		assert.strictEqual(statusCardCount, priorityCardCount, 'Card count should remain the same after property change');
-		assert.strictEqual(priorityCardCount, entries.length, 'All entries should be present');
+		assert.ok(vault.renameFn.calls.length > 0, 'vault.rename should be called');
+		const [, newPath] = vault.renameFn.calls[0];
+		assert.ok(newPath.startsWith('Board/Doing/'), `New path should be in Doing folder, got: ${newPath}`);
 	});
 });
 
-describe('Integration Tests - Multiple Views', () => {
-	let app: any;
-	let sortableMock: any;
+describe('Integration: Unsorted column', () => {
+	test('renders Unsorted column for root-level files', async () => {
+		const tree = createFileTreeWithUnsorted();
+		const { view } = await openView('Board', tree);
 
-	beforeEach(() => {
-		app = createMockApp();
-		sortableMock = mockSortable();
-		(global as any).Sortable = sortableMock.Sortable;
-	});
+		const columns = view.contentEl.querySelectorAll(`.${CSS_CLASSES.COLUMN}`);
+		const unsorted = Array.from(columns).find((c) => c.getAttribute(DATA_ATTRIBUTES.COLUMN_VALUE) === UNSORTED_LABEL);
+		assert.ok(unsorted, 'Unsorted column should be rendered');
 
-	test('Multiple instances work independently', () => {
-		const entries1 = createEntriesWithStatus();
-		const entries2 = createEntriesWithMixedProperties();
-
-		const controller1 = createMockQueryController(entries1, TEST_PROPERTIES) as any;
-		controller1.app = app;
-		controller1.config.getAsPropertyId = () => PROPERTY_STATUS;
-
-		const controller2 = createMockQueryController(entries2, TEST_PROPERTIES) as any;
-		controller2.app = app;
-		controller2.config.getAsPropertyId = () => PROPERTY_PRIORITY;
-
-		const scrollEl1 = createDivWithMethods();
-		const scrollEl2 = createDivWithMethods();
-
-		const view1 = new KanbanView(controller1, scrollEl1);
-		const view2 = new KanbanView(controller2, scrollEl2);
-		setupKanbanViewWithApp(view1, app);
-		setupKanbanViewWithApp(view2, app);
-
-		triggerDataUpdate(view1);
-		triggerDataUpdate(view2);
-
-		// Verify each view maintains its own state
-		assert.notStrictEqual(view1.containerEl, view2.containerEl, 'Views should have different containers');
-		assert.notStrictEqual(view1.scrollEl, view2.scrollEl, 'Views should have different scroll elements');
-
-		// Verify each view renders correctly
-		const board1 = view1.containerEl.querySelector('.obk-board');
-		const board2 = view2.containerEl.querySelector('.obk-board');
-		assert.ok(board1, 'View1 should have board');
-		assert.ok(board2, 'View2 should have board');
-
-		// Verify different column counts (different properties)
-		const columns1 = view1.containerEl.querySelectorAll('.obk-column');
-		const columns2 = view2.containerEl.querySelectorAll('.obk-column');
-		assert.ok(columns1.length > 0, 'View1 should have columns');
-		assert.ok(columns2.length > 0, 'View2 should have columns');
-
-		// Verify groupByPropertyId is independent
-		assert.strictEqual((view1 as any).groupByPropertyId, PROPERTY_STATUS, 'View1 should have STATUS property');
-		assert.strictEqual((view2 as any).groupByPropertyId, PROPERTY_PRIORITY, 'View2 should have PRIORITY property');
-	});
-
-	test('Cleanup does not affect other instances', () => {
-		const entries = createEntriesWithStatus();
-		const controller1 = createMockQueryController(entries, TEST_PROPERTIES) as any;
-		controller1.app = app;
-		controller1.config.getAsPropertyId = () => PROPERTY_STATUS;
-
-		const controller2 = createMockQueryController(entries, TEST_PROPERTIES) as any;
-		controller2.app = app;
-		controller2.config.getAsPropertyId = () => PROPERTY_STATUS;
-
-		const scrollEl1 = createDivWithMethods();
-		const scrollEl2 = createDivWithMethods();
-
-		const view1 = new KanbanView(controller1, scrollEl1);
-		const view2 = new KanbanView(controller2, scrollEl2);
-		setupKanbanViewWithApp(view1, app);
-		setupKanbanViewWithApp(view2, app);
-
-		triggerDataUpdate(view1);
-		triggerDataUpdate(view2);
-
-		const instancesBeforeClose = sortableMock.instances.length;
-
-		// Close view1
-		view1.onClose();
-
-		// Verify view2 still works
-		const board2 = view2.containerEl.querySelector('.obk-board');
-		assert.ok(board2, 'View2 should still have board after view1 cleanup');
-
-		// Verify view2's Sortable instances are still active
-		// (In real scenario, each view would have its own instances, but our mock shares them)
-		// For this test, we verify that view2 can still render
-		triggerDataUpdate(view2);
-		const board2After = view2.containerEl.querySelector('.obk-board');
-		assert.ok(board2After, 'View2 should still render after view1 cleanup');
-	});
-});
-
-describe('Integration Tests - Edge Cases', () => {
-	let scrollEl: HTMLElement;
-	let controller: any;
-	let app: any;
-	let sortableMock: any;
-
-	beforeEach(() => {
-		scrollEl = createDivWithMethods();
-		app = createMockApp();
-		sortableMock = mockSortable();
-		(global as any).Sortable = sortableMock.Sortable;
-		addClosestPolyfill(document.createElement('div'));
-	});
-
-	test('Handles rapid property changes', () => {
-		const entries = createEntriesWithMixedProperties();
-		controller = createMockQueryController(entries, TEST_PROPERTIES);
-		controller.app = app;
-
-		const view = new KanbanView(controller, scrollEl);
-
-		// Rapidly change properties
-		controller.config.getAsPropertyId = () => PROPERTY_STATUS;
-		triggerDataUpdate(view);
-
-		controller.config.getAsPropertyId = () => PROPERTY_PRIORITY;
-		triggerDataUpdate(view);
-
-		controller.config.getAsPropertyId = () => PROPERTY_STATUS;
-		triggerDataUpdate(view);
-
-		// Should not crash and should render correctly
-		const board = view.containerEl.querySelector('.obk-board');
-		assert.ok(board, 'Board should be rendered after rapid changes');
-	});
-
-	test('Handles entries with missing properties gracefully', () => {
-		// Create entries where some don't have the selected property
-		const entry1 = createMockBasesEntry(createMockTFile('Task1.md'), { [PROPERTY_STATUS]: 'To Do' });
-		const entry2 = createMockBasesEntry(createMockTFile('Task2.md'), {}); // No status
-		const entry3 = createMockBasesEntry(createMockTFile('Task3.md'), { [PROPERTY_STATUS]: 'Done' });
-
-		const entries = [entry1, entry2, entry3];
-		controller = createMockQueryController(entries, TEST_PROPERTIES);
-		controller.app = app;
-		controller.config.getAsPropertyId = () => PROPERTY_STATUS;
-
-		const view = new KanbanView(controller, scrollEl);
-		setupKanbanViewWithApp(view, app);
-		triggerDataUpdate(view);
-
-		// Should render without errors
-		const board = view.containerEl.querySelector('.obk-board');
-		assert.ok(board, 'Board should be rendered');
-
-		// Entry without property should go to Uncategorized
-		const uncategorizedColumn = Array.from(view.containerEl.querySelectorAll('.obk-column')).find((col) =>
-			col.getAttribute('data-column-value')?.includes('Uncategorized'),
-		);
-
-		assert.ok(uncategorizedColumn, 'Uncategorized column should exist');
-		const uncategorizedCards = uncategorizedColumn?.querySelectorAll('.obk-card');
-		assert.ok(uncategorizedCards && uncategorizedCards.length >= 1, 'Should have at least one uncategorized card');
+		const cards = unsorted?.querySelectorAll(`.${CSS_CLASSES.CARD}`);
+		assert.strictEqual(cards?.length, 1);
 	});
 });
