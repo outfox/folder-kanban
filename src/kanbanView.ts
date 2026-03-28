@@ -1,5 +1,5 @@
 import type { BasesEntry, CachedMetadata, QueryController, ViewOption } from 'obsidian';
-import { BasesView, Notice, TFolder, getAllTags } from 'obsidian';
+import { BasesView, Notice, TFile, TFolder, getAllTags } from 'obsidian';
 import Sortable from 'sortablejs';
 import {
 	COLOR_PALETTE,
@@ -95,6 +95,7 @@ export class FolderKanbanView extends BasesView {
 	private activeColorPicker: HTMLElement | null = null;
 	private _dragging = false;
 	private _activeCardPath: string | null = null;
+	private _cardLeaf: import('obsidian').WorkspaceLeaf | null = null;
 
 	private _prefs: {
 		columnOrder: string[];
@@ -459,9 +460,7 @@ export class FolderKanbanView extends BasesView {
 		cardEl.addEventListener('click', (e: MouseEvent) => {
 			if (e.target instanceof Element && e.target.closest('a')) return;
 			this.setActiveCard(card.filePath);
-			if (this.app?.workspace) {
-				void this.app.workspace.openLinkText(card.filePath, '', true);
-			}
+			void this.openCardInPane(card.filePath);
 		});
 
 		return cardEl;
@@ -703,6 +702,21 @@ export class FolderKanbanView extends BasesView {
 	}
 
 	// ── Helpers ────────────────────────────────────────────────────
+
+	private async openCardInPane(filePath: string): Promise<void> {
+		const file = this.app?.vault.getAbstractFileByPath(filePath);
+		if (!(file instanceof TFile) || !this.app?.workspace) return;
+
+		// Reuse the existing leaf if it's still attached to the workspace
+		if (this._cardLeaf && this._cardLeaf.parent) {
+			await this._cardLeaf.openFile(file);
+			return;
+		}
+
+		// Create a new leaf (tab) and remember it for reuse
+		this._cardLeaf = this.app.workspace.getLeaf('tab');
+		await this._cardLeaf.openFile(file);
+	}
 
 	private getOrderedColumnNames(liveNames: string[]): string[] {
 		if (!this._prefs.columnOrder.length) return liveNames.sort();

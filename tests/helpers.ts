@@ -89,6 +89,9 @@ export function createMockApp(fileTree?: Map<string, any>): App {
 	const renameFn = createMockFn();
 	const openLinkText = createMockFn();
 
+	const openFileFn = createMockFn();
+	const mockLeaf = { openFile: openFileFn, parent: {} };
+
 	return {
 		vault: {
 			getAbstractFileByPath: (path: string) => tree.get(path) ?? null,
@@ -100,7 +103,9 @@ export function createMockApp(fileTree?: Map<string, any>): App {
 		},
 		workspace: {
 			openLinkText,
+			getLeaf: () => mockLeaf,
 		},
+		_mockLeaf: mockLeaf,
 	} as any;
 }
 

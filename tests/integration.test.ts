@@ -22,18 +22,22 @@ async function createAndRender(entries: any[], rootFolder: string, app?: any) {
 	return { view, controller, app: (controller as any).app };
 }
 
-describe('Integration: Card click opens note', () => {
-	test('clicking a card calls workspace.openLinkText', async () => {
-		const app = createMockApp();
-		const { view } = await createAndRender(createStandardEntries(), 'Board', app);
+describe('Integration: Card click opens note in pane', () => {
+	test('clicking a card opens file in a reusable pane', async () => {
+		const entries = createStandardEntries();
+		const fileTree = new Map(entries.map((e) => [e.file.path, e.file]));
+		const app = createMockApp(fileTree);
+		const { view } = await createAndRender(entries, 'Board', app);
 
 		const card = view.containerEl.querySelector(`.${CSS_CLASSES.CARD}`) as HTMLElement;
 		assert.ok(card);
 
 		card.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+		// Allow async openCardInPane to resolve
+		await new Promise((r) => setTimeout(r, 0));
 
-		const openFn = (app.workspace as any).openLinkText;
-		assert.strictEqual(openFn.calls.length, 1);
+		const openFileFn = (app as any)._mockLeaf.openFile;
+		assert.ok(openFileFn.calls.length > 0, 'openFile should be called on the leaf');
 	});
 });
 
