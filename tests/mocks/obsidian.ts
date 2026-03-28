@@ -41,10 +41,24 @@ export interface QueryController {
 	app?: App;
 }
 
+export interface CachedMetadata {
+	tags?: { tag: string }[];
+	frontmatter?: Record<string, any>;
+}
+
+export function getAllTags(cache: CachedMetadata): string[] | null {
+	if (!cache.tags || cache.tags.length === 0) return null;
+	return cache.tags.map((t) => t.tag);
+}
+
 export interface App {
 	vault: {
 		getAbstractFileByPath(path: string): TAbstractFile | null;
 		rename(file: TAbstractFile, newPath: string): Promise<void>;
+		cachedRead(file: TFile): Promise<string>;
+	};
+	metadataCache: {
+		getFileCache(file: TFile): CachedMetadata | null;
 	};
 	workspace: {
 		openLinkText(path: string, source: string, newLeaf: boolean): void;

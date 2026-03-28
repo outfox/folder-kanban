@@ -20,16 +20,21 @@ function createView(entries: any[], rootFolder: string, configOverrides: Record<
 	return { view, scrollEl, controller };
 }
 
-function createAndRender(entries: any[], rootFolder: string, configOverrides: Record<string, unknown> = {}, app?: any) {
+async function createAndRender(
+	entries: any[],
+	rootFolder: string,
+	configOverrides: Record<string, unknown> = {},
+	app?: any,
+) {
 	const result = createView(entries, rootFolder, configOverrides, app);
-	triggerDataUpdate(result.view);
+	await triggerDataUpdate(result.view);
 	return result;
 }
 
 describe('FolderKanbanView', () => {
 	describe('rendering', () => {
-		test('renders columns for subfolders', () => {
-			const { view } = createAndRender(createStandardEntries(), 'Board');
+		test('renders columns for subfolders', async () => {
+			const { view } = await createAndRender(createStandardEntries(), 'Board');
 			const columns = view.containerEl.querySelectorAll(`.${CSS_CLASSES.COLUMN}`);
 			assert.strictEqual(columns.length, 3);
 
@@ -39,41 +44,41 @@ describe('FolderKanbanView', () => {
 			assert.ok(names.includes('Done'));
 		});
 
-		test('renders cards within columns', () => {
-			const { view } = createAndRender(createStandardEntries(), 'Board');
+		test('renders cards within columns', async () => {
+			const { view } = await createAndRender(createStandardEntries(), 'Board');
 			const cards = view.containerEl.querySelectorAll(`.${CSS_CLASSES.CARD}`);
 			assert.strictEqual(cards.length, 5);
 		});
 
-		test('shows empty state when no entries', () => {
-			const { view } = createAndRender(createEmptyEntries(), 'Board');
+		test('shows empty state when no entries', async () => {
+			const { view } = await createAndRender(createEmptyEntries(), 'Board');
 			const emptyState = view.containerEl.querySelector(`.${CSS_CLASSES.EMPTY_STATE}`);
 			assert.ok(emptyState);
 		});
 
-		test('shows empty state when no root folder configured', () => {
-			const { view } = createAndRender(createStandardEntries(), '');
+		test('shows empty state when no root folder configured', async () => {
+			const { view } = await createAndRender(createStandardEntries(), '');
 			const emptyState = view.containerEl.querySelector(`.${CSS_CLASSES.EMPTY_STATE}`);
 			assert.ok(emptyState);
 			assert.ok(emptyState?.textContent?.includes('root folder'));
 		});
 
-		test('shows Unsorted column when root has direct .md files', () => {
-			const { view } = createAndRender(createEntriesWithUnsorted(), 'Board');
+		test('shows Unsorted column when root has direct .md files', async () => {
+			const { view } = await createAndRender(createEntriesWithUnsorted(), 'Board');
 			const columns = view.containerEl.querySelectorAll(`.${CSS_CLASSES.COLUMN}`);
 			const unsortedCol = Array.from(columns).find((c) => c.getAttribute(DATA_ATTRIBUTES.COLUMN_VALUE) === UNSORTED_LABEL);
 			assert.ok(unsortedCol, 'Unsorted column should exist');
 		});
 
-		test('hides Unsorted column when no direct root files', () => {
-			const { view } = createAndRender(createStandardEntries(), 'Board');
+		test('hides Unsorted column when no direct root files', async () => {
+			const { view } = await createAndRender(createStandardEntries(), 'Board');
 			const columns = view.containerEl.querySelectorAll(`.${CSS_CLASSES.COLUMN}`);
 			const unsortedCol = Array.from(columns).find((c) => c.getAttribute(DATA_ATTRIBUTES.COLUMN_VALUE) === UNSORTED_LABEL);
 			assert.strictEqual(unsortedCol, undefined);
 		});
 
-		test('Unsorted column has no drag handle', () => {
-			const { view } = createAndRender(createEntriesWithUnsorted(), 'Board');
+		test('Unsorted column has no drag handle', async () => {
+			const { view } = await createAndRender(createEntriesWithUnsorted(), 'Board');
 			const columns = view.containerEl.querySelectorAll(`.${CSS_CLASSES.COLUMN}`);
 			const unsortedCol = Array.from(columns).find((c) => c.getAttribute(DATA_ATTRIBUTES.COLUMN_VALUE) === UNSORTED_LABEL);
 			assert.ok(unsortedCol);
@@ -83,8 +88,8 @@ describe('FolderKanbanView', () => {
 	});
 
 	describe('column ordering', () => {
-		test('applies saved column order', () => {
-			const { view } = createAndRender(createStandardEntries(), 'Board', {
+		test('applies saved column order', async () => {
+			const { view } = await createAndRender(createStandardEntries(), 'Board', {
 				columnOrder: ['Done', 'Doing', 'Todo'],
 			});
 			const columns = view.containerEl.querySelectorAll(`.${CSS_CLASSES.COLUMN}`);
@@ -92,15 +97,15 @@ describe('FolderKanbanView', () => {
 			assert.deepStrictEqual(names, ['Done', 'Doing', 'Todo']);
 		});
 
-		test('sorts alphabetically when no saved order', () => {
-			const { view } = createAndRender(createStandardEntries(), 'Board');
+		test('sorts alphabetically when no saved order', async () => {
+			const { view } = await createAndRender(createStandardEntries(), 'Board');
 			const columns = view.containerEl.querySelectorAll(`.${CSS_CLASSES.COLUMN}`);
 			const names = Array.from(columns).map((c) => c.getAttribute(DATA_ATTRIBUTES.COLUMN_VALUE));
 			assert.deepStrictEqual(names, ['Doing', 'Done', 'Todo']);
 		});
 
-		test('Unsorted column always appears last', () => {
-			const { view } = createAndRender(createEntriesWithUnsorted(), 'Board', {
+		test('Unsorted column always appears last', async () => {
+			const { view } = await createAndRender(createEntriesWithUnsorted(), 'Board', {
 				columnOrder: ['Done', 'Todo'],
 			});
 			const columns = view.containerEl.querySelectorAll(`.${CSS_CLASSES.COLUMN}`);
@@ -110,8 +115,8 @@ describe('FolderKanbanView', () => {
 	});
 
 	describe('card ordering', () => {
-		test('applies saved card order', () => {
-			const { view } = createAndRender(createStandardEntries(), 'Board', {
+		test('applies saved card order', async () => {
+			const { view } = await createAndRender(createStandardEntries(), 'Board', {
 				cardOrders: { Todo: ['Board/Todo/Task 2.md', 'Board/Todo/Task 1.md'] },
 			});
 			const columns = view.containerEl.querySelectorAll(`.${CSS_CLASSES.COLUMN}`);
@@ -124,8 +129,8 @@ describe('FolderKanbanView', () => {
 	});
 
 	describe('column colors', () => {
-		test('applies saved column colors', () => {
-			const { view } = createAndRender(createStandardEntries(), 'Board', {
+		test('applies saved column colors', async () => {
+			const { view } = await createAndRender(createStandardEntries(), 'Board', {
 				columnColors: { Todo: 'red' },
 			});
 			const columns = view.containerEl.querySelectorAll(`.${CSS_CLASSES.COLUMN}`);
@@ -136,8 +141,8 @@ describe('FolderKanbanView', () => {
 	});
 
 	describe('cleanup', () => {
-		test('onClose cleans up without errors', () => {
-			const { view } = createAndRender(createStandardEntries(), 'Board');
+		test('onClose cleans up without errors', async () => {
+			const { view } = await createAndRender(createStandardEntries(), 'Board');
 			assert.doesNotThrow(() => {
 				view.onClose();
 			});

@@ -93,6 +93,10 @@ export function createMockApp(fileTree?: Map<string, any>): App {
 		vault: {
 			getAbstractFileByPath: (path: string) => tree.get(path) ?? null,
 			rename: renameFn,
+			cachedRead: async () => '',
+		},
+		metadataCache: {
+			getFileCache: () => null,
 		},
 		workspace: {
 			openLinkText,
@@ -146,11 +150,13 @@ export function setupTestEnvironment(): void {
 }
 
 /**
- * Triggers onDataUpdated on a view and synchronously flushes the debounce.
+ * Triggers onDataUpdated on a view and waits for the async render to complete.
  */
-export function triggerDataUpdate(view: any): void {
+export async function triggerDataUpdate(view: any): Promise<void> {
 	mock.timers.enable({ apis: ['setTimeout'] });
 	view.onDataUpdated();
 	mock.timers.tick(DEBOUNCE_DELAY);
 	mock.timers.reset();
+	// Flush microtasks so the async render() promise resolves
+	await new Promise((r) => setTimeout(r, 0));
 }

@@ -14,18 +14,18 @@ import { createStandardEntries, createEntriesWithUnsorted } from './fixtures.ts'
 
 setupTestEnvironment();
 
-function createAndRender(entries: any[], rootFolder: string, app?: any) {
+async function createAndRender(entries: any[], rootFolder: string, app?: any) {
 	const scrollEl = createDivWithMethods();
 	const controller = createMockQueryController(entries, { rootFolder }, app);
 	const view = new FolderKanbanView(controller, scrollEl);
-	triggerDataUpdate(view);
+	await triggerDataUpdate(view);
 	return { view, controller, app: (controller as any).app };
 }
 
 describe('Integration: Card click opens note', () => {
-	test('clicking a card calls workspace.openLinkText', () => {
+	test('clicking a card calls workspace.openLinkText', async () => {
 		const app = createMockApp();
-		const { view } = createAndRender(createStandardEntries(), 'Board', app);
+		const { view } = await createAndRender(createStandardEntries(), 'Board', app);
 
 		const card = view.containerEl.querySelector(`.${CSS_CLASSES.CARD}`) as HTMLElement;
 		assert.ok(card);
@@ -38,8 +38,8 @@ describe('Integration: Card click opens note', () => {
 });
 
 describe('Integration: Drag-drop same column reorder', () => {
-	test('same-column drop persists card orders', () => {
-		const { view, controller } = createAndRender(createStandardEntries(), 'Board');
+	test('same-column drop persists card orders', async () => {
+		const { view, controller } = await createAndRender(createStandardEntries(), 'Board');
 
 		const columns = view.containerEl.querySelectorAll(`.${CSS_CLASSES.COLUMN}`);
 		const todoCol = Array.from(columns).find(
@@ -62,7 +62,7 @@ describe('Integration: Cross-column drag moves file', () => {
 		const entries = createStandardEntries();
 		const fileTree = new Map(entries.map((e) => [e.file.path, e.file]));
 		const app = createMockApp(fileTree);
-		const { view } = createAndRender(entries, 'Board', app);
+		const { view } = await createAndRender(entries, 'Board', app);
 
 		const columns = view.containerEl.querySelectorAll(`.${CSS_CLASSES.COLUMN}`);
 		const todoCol = Array.from(columns).find(
@@ -89,8 +89,8 @@ describe('Integration: Cross-column drag moves file', () => {
 });
 
 describe('Integration: Unsorted column', () => {
-	test('renders Unsorted column for root-level files', () => {
-		const { view } = createAndRender(createEntriesWithUnsorted(), 'Board');
+	test('renders Unsorted column for root-level files', async () => {
+		const { view } = await createAndRender(createEntriesWithUnsorted(), 'Board');
 
 		const columns = view.containerEl.querySelectorAll(`.${CSS_CLASSES.COLUMN}`);
 		const unsorted = Array.from(columns).find((c) => c.getAttribute(DATA_ATTRIBUTES.COLUMN_VALUE) === UNSORTED_LABEL);

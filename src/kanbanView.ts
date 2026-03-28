@@ -1,5 +1,5 @@
-import type { BasesEntry, QueryController, ViewOption } from 'obsidian';
-import { BasesView, Notice, TFolder } from 'obsidian';
+import type { BasesEntry, CachedMetadata, QueryController, ViewOption } from 'obsidian';
+import { BasesView, Notice, TFolder, getAllTags } from 'obsidian';
 import Sortable from 'sortablejs';
 import {
 	COLOR_PALETTE,
@@ -21,9 +21,28 @@ import { debounce } from './utils/debounce.ts';
  * Entries directly in rootFolder go to "Unsorted".
  * Entries outside rootFolder are ignored.
  */
+/** Extract the first ~200 chars of body text, stripping frontmatter and headings. */
+function extractPreview(content: string, maxLen = 200): string {
+	let body = content;
+	// Strip YAML frontmatter
+	if (body.startsWith('---')) {
+		const endIdx = body.indexOf('---', 3);
+		if (endIdx !== -1) body = body.slice(endIdx + 3);
+	}
+	// Strip lines that are headings or empty
+	const lines = body
+		.split('\n')
+		.map((l) => l.trim())
+		.filter((l) => l && !l.startsWith('#'));
+	const text = lines.join(' ').trim();
+	return text.length > maxLen ? text.slice(0, maxLen) + '\u2026' : text;
+}
+
 function groupEntriesByFolder(
 	entries: BasesEntry[],
 	rootFolder: string,
+	metadataCache?: { getFileCache(file: BasesEntry['file']): CachedMetadata | null },
+	fileContents?: Map<string, string>,
 ): Map<string, { col: ColumnData; entries: BasesEntry[] }> {
 	const groups = new Map<string, { col: ColumnData; entries: BasesEntry[] }>();
 	const prefix = rootFolder + '/';
@@ -37,7 +56,6 @@ function groupEntriesByFolder(
 
 		let folderName: string;
 		if (slashIdx === -1) {
-			// File directly in root folder
 			folderName = UNSORTED_LABEL;
 		} else {
 			folderName = relative.slice(0, slashIdx);
@@ -50,10 +68,15 @@ function groupEntriesByFolder(
 				entries: [],
 			});
 		}
-		// biome-ignore lint: group is guaranteed to exist by the set() above
+
+		const cache = metadataCache?.getFileCache(entry.file);
+		const tags = cache ? (getAllTags(cache) ?? []) : [];
+		const content = fileContents?.get(path) ?? '';
+		const preview = extractPreview(content);
+
 		const group = groups.get(folderName);
 		if (group) {
-			group.col.cards.push({ filePath: path, fileName: entry.file.basename });
+			group.col.cards.push({ filePath: path, fileName: entry.file.basename, tags, preview });
 			group.entries.push(entry);
 		}
 	}
@@ -87,11 +110,7 @@ export class FolderKanbanView extends BasesView {
 		this.containerEl = scrollEl.createDiv({ cls: CSS_CLASSES.VIEW_CONTAINER });
 
 		this._debouncedRender = debounce(() => {
-			try {
-				this.render();
-			} catch (error) {
-				console.error('FolderKanbanView error:', error);
-			}
+			void this.render();
 		}, DEBOUNCE_DELAY);
 	}
 
@@ -137,7 +156,7 @@ export class FolderKanbanView extends BasesView {
 
 	// ── Rendering ─────────────────────────────────────────────────
 
-	private render(): void {
+	private async render(): Promise<void> {
 		try {
 			const entries = this.data?.data || [];
 
@@ -153,7 +172,24 @@ export class FolderKanbanView extends BasesView {
 
 			this._loadPrefs();
 
-			const groups = groupEntriesByFolder(entries, rootFolder);
+			// Pre-load file contents for preview (async, batched)
+			const showPreview = this.config?.get('showPreview') !== false;
+			const fileContents = new Map<string, string>();
+			if (showPreview && this.app?.vault) {
+				const reads = entries.map(async (e) => {
+					try {
+						const vault = this.app?.vault;
+						if (!vault) return;
+						const content = await vault.cachedRead(e.file);
+						fileContents.set(e.file.path, content);
+					} catch {
+						// File may have been deleted between query and render
+					}
+				});
+				await Promise.all(reads);
+			}
+
+			const groups = groupEntriesByFolder(entries, rootFolder, this.app?.metadataCache, fileContents);
 
 			// Ensure all actual subfolders of the root appear as columns, even if empty
 			const rootAbstract = this.app?.vault.getAbstractFileByPath(rootFolder);
@@ -206,6 +242,14 @@ export class FolderKanbanView extends BasesView {
 				.filter((c): c is ColumnData => c !== undefined);
 			const unsortedGroup = displayGroups.get(UNSORTED_LABEL);
 			if (unsortedGroup) orderedColumns.push(unsortedGroup.col);
+
+			// Apply column width from config
+			const columnWidth = this.config?.get('columnWidth');
+			if (typeof columnWidth === 'number' && columnWidth > 0) {
+				this.containerEl.style.setProperty('--fbk-column-width', `${columnWidth}px`);
+			} else {
+				this.containerEl.style.removeProperty('--fbk-column-width');
+			}
 
 			const existingBoard = this.containerEl.querySelector<HTMLElement>(`.${CSS_CLASSES.BOARD}`);
 			if (!existingBoard) {
@@ -393,6 +437,21 @@ export class FolderKanbanView extends BasesView {
 
 		const titleEl = cardEl.createDiv({ cls: CSS_CLASSES.CARD_TITLE });
 		titleEl.textContent = card.fileName;
+
+		// Tags
+		const showTags = this.config?.get('showTags') !== false;
+		if (showTags && card.tags.length > 0) {
+			const tagsEl = cardEl.createDiv({ cls: CSS_CLASSES.CARD_TAGS });
+			for (const tag of card.tags) {
+				tagsEl.createSpan({ text: tag, cls: CSS_CLASSES.CARD_TAG });
+			}
+		}
+
+		// Preview
+		const showPreview = this.config?.get('showPreview') !== false;
+		if (showPreview && card.preview) {
+			cardEl.createDiv({ text: card.preview, cls: CSS_CLASSES.CARD_PREVIEW });
+		}
 
 		cardEl.addEventListener('mouseenter', () => cardEl.classList.add(CSS_CLASSES.CARD_HOVER));
 		cardEl.addEventListener('mouseleave', () => cardEl.classList.remove(CSS_CLASSES.CARD_HOVER));
@@ -610,7 +669,7 @@ export class FolderKanbanView extends BasesView {
 		const file = this.app?.vault.getAbstractFileByPath(entryPath);
 		if (!file || !('extension' in file)) {
 			console.warn('File not found:', entryPath);
-			this.render();
+			await this.render();
 			return;
 		}
 
@@ -620,7 +679,7 @@ export class FolderKanbanView extends BasesView {
 
 		if (this.app?.vault.getAbstractFileByPath(newPath)) {
 			new Notice(`A file named "${fileName}" already exists in "${newColumnValue}".`);
-			this.render();
+			await this.render();
 			return;
 		}
 
@@ -629,7 +688,7 @@ export class FolderKanbanView extends BasesView {
 		} catch (error) {
 			console.error('Error moving file:', error);
 			new Notice(`Failed to move "${fileName}".`);
-			this.render();
+			await this.render();
 		}
 	}
 
@@ -695,6 +754,27 @@ export class FolderKanbanView extends BasesView {
 				type: 'folder',
 				key: 'rootFolder',
 				placeholder: 'Select folder',
+			},
+			{
+				displayName: 'Show tags',
+				type: 'toggle',
+				key: 'showTags',
+				default: true,
+			},
+			{
+				displayName: 'Show preview',
+				type: 'toggle',
+				key: 'showPreview',
+				default: true,
+			},
+			{
+				displayName: 'Column width',
+				type: 'slider',
+				key: 'columnWidth',
+				default: 280,
+				min: 180,
+				max: 500,
+				step: 10,
 			},
 		];
 	}

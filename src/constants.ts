@@ -55,6 +55,9 @@ export const CSS_CLASSES = {
 	CARD_DRAGGING: 'fbk-card-dragging',
 	CARD_GHOST: 'fbk-card-ghost',
 	CARD_CHOSEN: 'fbk-card-chosen',
+	CARD_TAGS: 'fbk-card-tags',
+	CARD_TAG: 'fbk-card-tag',
+	CARD_PREVIEW: 'fbk-card-preview',
 
 	// Empty state
 	EMPTY_STATE: 'fbk-empty-state',

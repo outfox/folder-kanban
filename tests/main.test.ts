@@ -56,12 +56,17 @@ describe('Plugin Registration', () => {
 });
 
 describe('View Options', () => {
-	test('getViewOptions returns folder option', () => {
+	test('getViewOptions returns expected options', () => {
 		const options = FolderKanbanView.getViewOptions();
 
-		assert.strictEqual(options.length, 1);
-		assert.strictEqual(options[0].displayName, 'Root folder');
+		assert.strictEqual(options.length, 4);
 		assert.strictEqual(options[0].type, 'folder');
 		assert.strictEqual(options[0].key, 'rootFolder');
+		assert.strictEqual(options[1].type, 'toggle');
+		assert.strictEqual(options[1].key, 'showTags');
+		assert.strictEqual(options[2].type, 'toggle');
+		assert.strictEqual(options[2].key, 'showPreview');
+		assert.strictEqual(options[3].type, 'slider');
+		assert.strictEqual(options[3].key, 'columnWidth');
 	});
 });
