@@ -460,7 +460,7 @@ export class FolderKanbanView extends BasesView {
 			if (e.target instanceof Element && e.target.closest('a')) return;
 			this.setActiveCard(card.filePath);
 			if (this.app?.workspace) {
-				void this.app.workspace.openLinkText(card.filePath, '', false);
+				void this.app.workspace.openLinkText(card.filePath, '', true);
 			}
 		});
 
