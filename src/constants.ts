@@ -83,7 +83,6 @@ export const DEBOUNCE_DELAY = 50;
 
 /** Empty state messages */
 export const EMPTY_STATE_MESSAGES = {
-	NO_ENTRIES: 'No entries found. Add some notes to your base.',
 	NO_ROOT_FOLDER: 'No root folder selected. Choose one in the view options.',
-	NO_SUBFOLDERS: 'No entries match subfolders of the selected root folder.',
+	NO_SUBFOLDERS: 'No subfolders found. Create subfolders in the root folder to use as columns.',
 } as const;

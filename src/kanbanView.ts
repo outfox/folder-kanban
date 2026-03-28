@@ -1,5 +1,5 @@
 import type { BasesEntry, QueryController, ViewOption } from 'obsidian';
-import { BasesView, Notice } from 'obsidian';
+import { BasesView, Notice, TFolder } from 'obsidian';
 import Sortable from 'sortablejs';
 import {
 	COLOR_PALETTE,
@@ -140,14 +140,6 @@ export class FolderKanbanView extends BasesView {
 	private render(): void {
 		try {
 			const entries = this.data?.data || [];
-			if (!entries || entries.length === 0) {
-				this.fullReset();
-				this.containerEl.createDiv({
-					text: EMPTY_STATE_MESSAGES.NO_ENTRIES,
-					cls: CSS_CLASSES.EMPTY_STATE,
-				});
-				return;
-			}
 
 			const rootFolder = this.getRootFolder();
 			if (!rootFolder) {
@@ -162,6 +154,19 @@ export class FolderKanbanView extends BasesView {
 			this._loadPrefs();
 
 			const groups = groupEntriesByFolder(entries, rootFolder);
+
+			// Ensure all actual subfolders of the root appear as columns, even if empty
+			const rootAbstract = this.app?.vault.getAbstractFileByPath(rootFolder);
+			if (rootAbstract instanceof TFolder) {
+				for (const child of rootAbstract.children) {
+					if (child instanceof TFolder && !groups.has(child.name)) {
+						groups.set(child.name, {
+							col: { folderName: child.name, folderPath: child.path, cards: [] },
+							entries: [],
+						});
+					}
+				}
+			}
 
 			if (groups.size === 0) {
 				this.fullReset();
