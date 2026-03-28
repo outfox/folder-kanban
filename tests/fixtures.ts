@@ -1,42 +1,32 @@
-import { buildFileTree } from './helpers.ts';
+import { createMockTFile, createMockBasesEntry } from './helpers.ts';
+import type { BasesEntry } from 'obsidian';
 
-/** Standard kanban layout: Todo, Doing, Done subfolders with some .md files */
-export function createStandardFileTree() {
-	return buildFileTree('Board', {
-		Todo: ['Task 1.md', 'Task 2.md'],
-		Doing: ['Task 3.md'],
-		Done: ['Task 4.md', 'Task 5.md'],
-	});
+/** Entries in Board/Todo, Board/Doing, Board/Done subfolders */
+export function createStandardEntries(): BasesEntry[] {
+	return [
+		createMockBasesEntry(createMockTFile('Board/Todo/Task 1.md')),
+		createMockBasesEntry(createMockTFile('Board/Todo/Task 2.md')),
+		createMockBasesEntry(createMockTFile('Board/Doing/Task 3.md')),
+		createMockBasesEntry(createMockTFile('Board/Done/Task 4.md')),
+		createMockBasesEntry(createMockTFile('Board/Done/Task 5.md')),
+	];
 }
 
-/** File tree with files in the root folder (unsorted) */
-export function createFileTreeWithUnsorted() {
-	return buildFileTree(
-		'Board',
-		{
-			Todo: ['Task 1.md'],
-			Done: ['Task 2.md'],
-		},
-		['Unsorted Task.md'],
-	);
+/** Entries with some files directly in root folder (unsorted) */
+export function createEntriesWithUnsorted(): BasesEntry[] {
+	return [
+		createMockBasesEntry(createMockTFile('Board/Todo/Task 1.md')),
+		createMockBasesEntry(createMockTFile('Board/Done/Task 2.md')),
+		createMockBasesEntry(createMockTFile('Board/Loose Note.md')),
+	];
 }
 
-/** Empty root folder (no subfolders, no files) */
-export function createEmptyFileTree() {
-	return buildFileTree('Board', {});
+/** Single entry */
+export function createSingleEntry(): BasesEntry[] {
+	return [createMockBasesEntry(createMockTFile('Board/Inbox/Note.md'))];
 }
 
-/** Single subfolder with one file */
-export function createSingleColumnFileTree() {
-	return buildFileTree('Board', {
-		Inbox: ['Note.md'],
-	});
-}
-
-/** Subfolders with no .md files */
-export function createEmptySubfoldersFileTree() {
-	return buildFileTree('Board', {
-		Todo: [],
-		Done: [],
-	});
+/** No entries */
+export function createEmptyEntries(): BasesEntry[] {
+	return [];
 }

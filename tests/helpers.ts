@@ -1,10 +1,8 @@
 import { JSDOM } from 'jsdom';
 import { mock } from 'node:test';
-import { TFile, TFolder } from 'obsidian';
-import type { App } from 'obsidian';
+import { TFile } from 'obsidian';
+import type { App, BasesEntry, BasesPropertyId, QueryController } from 'obsidian';
 import { DEBOUNCE_DELAY } from '../src/constants.ts';
-import type { PersistedState } from '../src/types.ts';
-import { DEFAULT_STATE } from '../src/types.ts';
 
 // Setup jsdom environment
 const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
@@ -43,31 +41,9 @@ if (!HTMLElementProto.createSpan) {
 	};
 }
 
-if (!HTMLElementProto.createEl) {
-	HTMLElementProto.createEl = function (tag: string, options?: { cls?: string; text?: string }): HTMLElement {
-		const el = document.createElement(tag);
-		if (options?.cls) el.className = options.cls;
-		if (options?.text) el.textContent = options.text;
-		this.appendChild(el);
-		return el;
-	};
-}
-
 if (!HTMLElementProto.empty) {
 	HTMLElementProto.empty = function (): void {
 		while (this.firstChild) this.removeChild(this.firstChild);
-	};
-}
-
-if (!HTMLElementProto.addClass) {
-	HTMLElementProto.addClass = function (cls: string): void {
-		this.classList.add(cls);
-	};
-}
-
-if (!HTMLElementProto.removeClass) {
-	HTMLElementProto.removeClass = function (cls: string): void {
-		this.classList.remove(cls);
 	};
 }
 
@@ -80,14 +56,6 @@ export function createMockTFile(path: string): TFile {
 	file.extension = name.split('.').pop() || '';
 	file.stat = { size: 100, ctime: Date.now(), mtime: Date.now() };
 	return file;
-}
-
-export function createMockTFolder(path: string, children: (TFile | TFolder)[] = []): TFolder {
-	const folder = new TFolder();
-	folder.path = path;
-	folder.name = path.split('/').pop() || path;
-	folder.children = children;
-	return folder;
 }
 
 export interface MockFn {
@@ -109,101 +77,49 @@ export function createMockFn(): MockFn {
 	return fn;
 }
 
-export function createMockVault(fileTree: Map<string, TFile | TFolder> = new Map()) {
-	const renameFn = createMockFn();
-	const eventHandlers = new Map<string, ((...args: any[]) => void)[]>();
-
+export function createMockBasesEntry(file: TFile): BasesEntry {
 	return {
-		getAbstractFileByPath: (path: string) => fileTree.get(path) ?? null,
-		rename: renameFn as any,
-		on: (event: string, callback: (...args: any[]) => void) => {
-			if (!eventHandlers.has(event)) eventHandlers.set(event, []);
-			eventHandlers.get(event)!.push(callback);
-			return { id: `${event}-${Date.now()}` };
-		},
-		renameFn,
-		eventHandlers,
-	} as any;
+		file,
+		getValue: (_propertyId: BasesPropertyId) => null,
+	} as BasesEntry;
 }
 
-export function createMockApp(vault?: any) {
-	const v = vault ?? createMockVault();
+export function createMockApp(fileTree?: Map<string, any>): App {
+	const tree = fileTree ?? new Map();
+	const renameFn = createMockFn();
 	const openLinkText = createMockFn();
+
 	return {
-		vault: v,
+		vault: {
+			getAbstractFileByPath: (path: string) => tree.get(path) ?? null,
+			rename: renameFn,
+		},
 		workspace: {
 			openLinkText,
-			getLeavesOfType: (): any[] => [],
-			getLeaf: () => ({ setViewState: async () => {} }),
-			revealLeaf: () => {},
 		},
 	} as any;
 }
 
-export function createMockLeaf(app?: App): any {
-	const a = app ?? createMockApp();
-	return { app: a };
-}
-
-export function createMockPlugin(state?: Partial<PersistedState>, app?: App): any {
-	const a = app ?? createMockApp();
-	const s = { ...DEFAULT_STATE, ...state, settings: { ...DEFAULT_STATE.settings, ...(state?.settings ?? {}) } };
+export function createMockQueryController(
+	entries: BasesEntry[] = [],
+	configData: Record<string, unknown> = {},
+	app?: App,
+): QueryController {
+	const data = { ...configData };
 	return {
-		app: a,
-		state: s,
-		saveSettings: createMockFn(),
-		refreshViews: () => {},
-	};
-}
-
-/** Build a file tree for testing: root folder with subfolders containing .md files. */
-export function buildFileTree(
-	rootPath: string,
-	subfolders: Record<string, string[]>,
-	rootFiles: string[] = [],
-): Map<string, TFile | TFolder> {
-	const tree = new Map<string, TFile | TFolder>();
-
-	const rootChildren: (TFile | TFolder)[] = [];
-
-	// Root-level .md files
-	for (const fileName of rootFiles) {
-		const filePath = `${rootPath}/${fileName}`;
-		const file = createMockTFile(filePath);
-		tree.set(filePath, file);
-		rootChildren.push(file);
-	}
-
-	// Subfolders
-	for (const [folderName, files] of Object.entries(subfolders)) {
-		const folderPath = `${rootPath}/${folderName}`;
-		const folderChildren: TFile[] = [];
-
-		for (const fileName of files) {
-			const filePath = `${folderPath}/${fileName}`;
-			const file = createMockTFile(filePath);
-			tree.set(filePath, file);
-			folderChildren.push(file);
-		}
-
-		const folder = createMockTFolder(folderPath, folderChildren);
-		tree.set(folderPath, folder);
-		rootChildren.push(folder);
-	}
-
-	const rootFolder = createMockTFolder(rootPath, rootChildren);
-	tree.set(rootPath, rootFolder);
-
-	return tree;
-}
-
-export function setupTestEnvironment(): void {
-	if (typeof document === 'undefined') {
-		const newDom = new JSDOM('<!DOCTYPE html><html><body></body></html>');
-		(global as any).document = newDom.window.document;
-		(global as any).window = newDom.window;
-		(global as any).HTMLElement = newDom.window.HTMLElement;
-	}
+		data: { data: entries },
+		allProperties: [],
+		config: {
+			get: (key: string): unknown => data[key] ?? null,
+			set: (key: string, value: unknown): void => {
+				data[key] = value;
+			},
+			getOrder: (): string[] => [],
+			getDisplayName: (id: string): string => id,
+			getAsPropertyId: (_key: string): string | null => null,
+		},
+		app: app ?? createMockApp(),
+	} as unknown as QueryController;
 }
 
 export function createDivWithMethods(): HTMLElement {
@@ -220,12 +136,21 @@ export function createMockSortableEvent(
 	return { item, from, to, oldIndex, newIndex };
 }
 
+export function setupTestEnvironment(): void {
+	if (typeof document === 'undefined') {
+		const newDom = new JSDOM('<!DOCTYPE html><html><body></body></html>');
+		(global as any).document = newDom.window.document;
+		(global as any).window = newDom.window;
+		(global as any).HTMLElement = newDom.window.HTMLElement;
+	}
+}
+
 /**
- * Triggers a refresh on a FolderKanbanView and synchronously flushes the debounce.
+ * Triggers onDataUpdated on a view and synchronously flushes the debounce.
  */
-export function triggerRefresh(view: any): void {
+export function triggerDataUpdate(view: any): void {
 	mock.timers.enable({ apis: ['setTimeout'] });
-	view.refresh();
+	view.onDataUpdated();
 	mock.timers.tick(DEBOUNCE_DELAY);
 	mock.timers.reset();
 }

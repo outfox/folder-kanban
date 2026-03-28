@@ -1,4 +1,5 @@
-import { ItemView, Notice, type TAbstractFile, type WorkspaceLeaf } from 'obsidian';
+import type { BasesEntry, QueryController, ViewOption } from 'obsidian';
+import { BasesView, Notice } from 'obsidian';
 import Sortable from 'sortablejs';
 import {
 	COLOR_PALETTE,
@@ -10,26 +11,82 @@ import {
 	SORTABLE_GROUP,
 	UNSORTED_LABEL,
 } from './constants.ts';
-import { scanRootFolder } from './folderScanner.ts';
-import type FolderKanbanPlugin from './main.ts';
-import { VIEW_TYPE_FOLDER_KANBAN } from './main.ts';
 import type { CardData, ColumnData } from './types.ts';
 import type { DebouncedFn } from './utils/debounce.ts';
 import { debounce } from './utils/debounce.ts';
 
-export class FolderKanbanView extends ItemView {
-	plugin: FolderKanbanPlugin;
+/**
+ * Groups BasesEntry[] by their parent folder relative to rootFolder.
+ * Entries whose path starts with rootFolder/<subfolder>/ are grouped by subfolder name.
+ * Entries directly in rootFolder go to "Unsorted".
+ * Entries outside rootFolder are ignored.
+ */
+function groupEntriesByFolder(
+	entries: BasesEntry[],
+	rootFolder: string,
+): Map<string, { col: ColumnData; entries: BasesEntry[] }> {
+	const groups = new Map<string, { col: ColumnData; entries: BasesEntry[] }>();
+	const prefix = rootFolder + '/';
+
+	for (const entry of entries) {
+		const path = entry.file.path;
+		if (!path.startsWith(prefix)) continue;
+
+		const relative = path.slice(prefix.length);
+		const slashIdx = relative.indexOf('/');
+
+		let folderName: string;
+		if (slashIdx === -1) {
+			// File directly in root folder
+			folderName = UNSORTED_LABEL;
+		} else {
+			folderName = relative.slice(0, slashIdx);
+		}
+
+		if (!groups.has(folderName)) {
+			const folderPath = folderName === UNSORTED_LABEL ? rootFolder : prefix + folderName;
+			groups.set(folderName, {
+				col: { folderName, folderPath, cards: [] },
+				entries: [],
+			});
+		}
+		// biome-ignore lint: group is guaranteed to exist by the set() above
+		const group = groups.get(folderName);
+		if (group) {
+			group.col.cards.push({ filePath: path, fileName: entry.file.basename });
+			group.entries.push(entry);
+		}
+	}
+
+	return groups;
+}
+
+export class FolderKanbanView extends BasesView {
+	type = 'folder-kanban-view';
+
+	scrollEl: HTMLElement;
+	containerEl: HTMLElement;
 	private _columnSortables: Map<string, Sortable> = new Map();
 	private columnSortable: Sortable | null = null;
-	private _debouncedRefresh: DebouncedFn<() => void>;
+	private _debouncedRender: DebouncedFn<() => void>;
 	private activeColorPicker: HTMLElement | null = null;
 	private _dragging = false;
 	private _activeCardPath: string | null = null;
 
-	constructor(leaf: WorkspaceLeaf, plugin: FolderKanbanPlugin) {
-		super(leaf);
-		this.plugin = plugin;
-		this._debouncedRefresh = debounce(() => {
+	private _prefs: {
+		columnOrder: string[];
+		cardOrders: Record<string, string[]>;
+		columnColors: Record<string, string>;
+	} = { columnOrder: [], cardOrders: {}, columnColors: {} };
+
+	private _prefsLoaded = false;
+
+	constructor(controller: QueryController, scrollEl: HTMLElement) {
+		super(controller);
+		this.scrollEl = scrollEl;
+		this.containerEl = scrollEl.createDiv({ cls: CSS_CLASSES.VIEW_CONTAINER });
+
+		this._debouncedRender = debounce(() => {
 			try {
 				this.render();
 			} catch (error) {
@@ -38,94 +95,77 @@ export class FolderKanbanView extends ItemView {
 		}, DEBOUNCE_DELAY);
 	}
 
-	getViewType(): string {
-		return VIEW_TYPE_FOLDER_KANBAN;
+	onDataUpdated(): void {
+		this._debouncedRender();
 	}
 
-	getDisplayText(): string {
-		return 'Folder kanban';
+	// ── Preferences (persisted via BasesViewConfig) ───────────────
+
+	private _loadPrefs(): void {
+		if (this._prefsLoaded) return;
+		this._prefsLoaded = true;
+
+		const rawOrders: unknown = this.config?.get('columnOrder');
+		if (Array.isArray(rawOrders)) {
+			this._prefs.columnOrder = rawOrders.filter((v): v is string => typeof v === 'string');
+		}
+
+		const rawCardOrders: unknown = this.config?.get('cardOrders');
+		if (rawCardOrders && typeof rawCardOrders === 'object' && !Array.isArray(rawCardOrders)) {
+			const result: Record<string, string[]> = {};
+			for (const [k, v] of Object.entries(rawCardOrders)) {
+				result[k] = Array.isArray(v) ? v.filter((s): s is string => typeof s === 'string') : [];
+			}
+			this._prefs.cardOrders = result;
+		}
+
+		const rawColors: unknown = this.config?.get('columnColors');
+		if (rawColors && typeof rawColors === 'object' && !Array.isArray(rawColors)) {
+			const result: Record<string, string> = {};
+			for (const [k, v] of Object.entries(rawColors)) {
+				if (typeof v === 'string') result[k] = v;
+			}
+			this._prefs.columnColors = result;
+		}
 	}
 
-	getIcon(): string {
-		return 'columns-3';
-	}
-
-	async onOpen(): Promise<void> {
-		this.contentEl.addClass(CSS_CLASSES.VIEW_CONTAINER);
-		this.registerVaultEvents();
-		this.render();
-	}
-
-	async onClose(): Promise<void> {
-		this._debouncedRefresh.cancel();
-		this.destroySortables();
-		this.activeColorPicker?.remove();
-		this.activeColorPicker = null;
-	}
-
-	/** Called by the plugin when settings change or vault events fire. */
-	refresh(): void {
-		this._debouncedRefresh();
-	}
-
-	// ── Vault events ──────────────────────────────────────────────
-
-	private registerVaultEvents(): void {
-		const relevant = (path: string) => {
-			const root = this.plugin.state.settings.rootFolder;
-			return root !== '' && (path === root || path.startsWith(root + '/'));
-		};
-
-		this.registerEvent(
-			this.app.vault.on('create', (file: TAbstractFile) => {
-				if (relevant(file.path)) this._debouncedRefresh();
-			}),
-		);
-		this.registerEvent(
-			this.app.vault.on('delete', (file: TAbstractFile) => {
-				if (relevant(file.path)) this._debouncedRefresh();
-			}),
-		);
-		this.registerEvent(
-			this.app.vault.on('rename', (file: TAbstractFile, oldPath: string) => {
-				if (relevant(file.path) || relevant(oldPath)) this._debouncedRefresh();
-			}),
-		);
+	private _persistPrefs(): void {
+		this.config?.set('columnOrder', this._prefs.columnOrder);
+		this.config?.set('cardOrders', this._prefs.cardOrders);
+		this.config?.set('columnColors', this._prefs.columnColors);
 	}
 
 	// ── Rendering ─────────────────────────────────────────────────
 
 	private render(): void {
 		try {
-			const rootFolder = this.plugin.state.settings.rootFolder;
+			const entries = this.data?.data || [];
+			if (!entries || entries.length === 0) {
+				this.fullReset();
+				this.containerEl.createDiv({
+					text: EMPTY_STATE_MESSAGES.NO_ENTRIES,
+					cls: CSS_CLASSES.EMPTY_STATE,
+				});
+				return;
+			}
+
+			const rootFolder = this.getRootFolder();
 			if (!rootFolder) {
 				this.fullReset();
-				this.contentEl.createDiv({
+				this.containerEl.createDiv({
 					text: EMPTY_STATE_MESSAGES.NO_ROOT_FOLDER,
 					cls: CSS_CLASSES.EMPTY_STATE,
 				});
 				return;
 			}
 
-			const columns = scanRootFolder(this.app.vault, rootFolder);
+			this._loadPrefs();
 
-			// Check if root folder exists
-			const rootExists = this.app.vault.getAbstractFileByPath(rootFolder);
-			if (!rootExists) {
+			const groups = groupEntriesByFolder(entries, rootFolder);
+
+			if (groups.size === 0) {
 				this.fullReset();
-				this.contentEl.createDiv({
-					text: EMPTY_STATE_MESSAGES.ROOT_NOT_FOUND,
-					cls: CSS_CLASSES.EMPTY_STATE,
-				});
-				return;
-			}
-
-			// Filter out empty "Unsorted" for display; keep non-Unsorted columns even if empty
-			const displayColumns = columns.filter((c) => c.folderName !== UNSORTED_LABEL || c.cards.length > 0);
-
-			if (displayColumns.length === 0) {
-				this.fullReset();
-				this.contentEl.createDiv({
+				this.containerEl.createDiv({
 					text: EMPTY_STATE_MESSAGES.NO_SUBFOLDERS,
 					cls: CSS_CLASSES.EMPTY_STATE,
 				});
@@ -133,35 +173,36 @@ export class FolderKanbanView extends ItemView {
 			}
 
 			// Apply saved card order within each column
-			for (const col of displayColumns) {
-				const savedOrder = this.plugin.state.cardOrders[col.folderName];
+			for (const [folderName, group] of groups) {
+				const savedOrder = this._prefs.cardOrders[folderName];
 				if (savedOrder) {
-					col.cards = this.applyCardOrder(col.cards, savedOrder);
+					group.col.cards = this.applyCardOrder(group.col.cards, savedOrder);
 				}
 			}
 
+			// Filter out empty "Unsorted"
+			const displayGroups = new Map([...groups].filter(([name, g]) => name !== UNSORTED_LABEL || g.col.cards.length > 0));
+
 			// Merge newly-seen columns into saved order
-			const liveNames = displayColumns.map((c) => c.folderName).filter((n) => n !== UNSORTED_LABEL);
-			const newNames = liveNames.filter((n) => !this.plugin.state.columnOrder.includes(n));
+			const liveNames = [...displayGroups.keys()].filter((n) => n !== UNSORTED_LABEL);
+			const newNames = liveNames.filter((n) => !this._prefs.columnOrder.includes(n));
 			if (newNames.length > 0) {
-				if (this.plugin.state.columnOrder.length === 0) {
-					this.plugin.state.columnOrder = [...liveNames].sort();
+				if (this._prefs.columnOrder.length === 0) {
+					this._prefs.columnOrder = [...liveNames].sort();
 				} else {
-					this.plugin.state.columnOrder = [...this.plugin.state.columnOrder, ...newNames];
+					this._prefs.columnOrder = [...this._prefs.columnOrder, ...newNames];
 				}
-				void this.plugin.saveSettings();
+				this._persistPrefs();
 			}
 
 			const orderedNames = this.getOrderedColumnNames(liveNames);
-			// Build ordered ColumnData array; "Unsorted" always goes last
-			const columnMap = new Map(displayColumns.map((c) => [c.folderName, c]));
 			const orderedColumns: ColumnData[] = orderedNames
-				.map((name) => columnMap.get(name))
+				.map((name) => displayGroups.get(name)?.col)
 				.filter((c): c is ColumnData => c !== undefined);
-			const unsortedCol = columnMap.get(UNSORTED_LABEL);
-			if (unsortedCol) orderedColumns.push(unsortedCol);
+			const unsortedGroup = displayGroups.get(UNSORTED_LABEL);
+			if (unsortedGroup) orderedColumns.push(unsortedGroup.col);
 
-			const existingBoard = this.contentEl.querySelector<HTMLElement>(`.${CSS_CLASSES.BOARD}`);
+			const existingBoard = this.containerEl.querySelector<HTMLElement>(`.${CSS_CLASSES.BOARD}`);
 			if (!existingBoard) {
 				this.fullRebuild(orderedColumns);
 			} else {
@@ -171,6 +212,12 @@ export class FolderKanbanView extends ItemView {
 		} catch (error) {
 			console.error('FolderKanbanView error:', error);
 		}
+	}
+
+	private getRootFolder(): string | null {
+		const raw = this.config?.get('rootFolder');
+		if (typeof raw === 'string' && raw.trim() !== '') return raw.trim();
+		return null;
 	}
 
 	private destroySortables(): void {
@@ -183,15 +230,15 @@ export class FolderKanbanView extends ItemView {
 	}
 
 	private fullReset(): void {
-		this.contentEl.empty();
+		this.containerEl.empty();
 		this.destroySortables();
 	}
 
 	private fullRebuild(columns: ColumnData[]): void {
-		this.contentEl.empty();
+		this.containerEl.empty();
 		this.destroySortables();
 
-		const boardEl = this.contentEl.createDiv({ cls: CSS_CLASSES.BOARD });
+		const boardEl = this.containerEl.createDiv({ cls: CSS_CLASSES.BOARD });
 		for (const col of columns) {
 			boardEl.appendChild(this.createColumn(col));
 		}
@@ -211,7 +258,6 @@ export class FolderKanbanView extends ItemView {
 
 		const newNameSet = new Set(columns.map((c) => c.folderName));
 
-		// Remove columns no longer present
 		existingColumns.forEach((colEl, value) => {
 			if (!newNameSet.has(value)) {
 				this.detachColumn(value, colEl);
@@ -219,7 +265,6 @@ export class FolderKanbanView extends ItemView {
 			}
 		});
 
-		// Add new columns; patch cards in existing ones
 		for (const col of columns) {
 			if (!existingColumns.has(col.folderName)) {
 				const columnEl = this.createColumn(col);
@@ -235,7 +280,6 @@ export class FolderKanbanView extends ItemView {
 			}
 		}
 
-		// Re-order columns in DOM
 		for (const col of columns) {
 			const colEl = existingColumns.get(col.folderName);
 			if (colEl) boardEl.appendChild(colEl);
@@ -246,11 +290,9 @@ export class FolderKanbanView extends ItemView {
 		const body = columnEl.querySelector<HTMLElement>(`.${CSS_CLASSES.COLUMN_BODY}`);
 		if (!body) return;
 
-		// Update column count
 		const countEl = columnEl.querySelector(`.${CSS_CLASSES.COLUMN_COUNT}`);
 		if (countEl) countEl.textContent = `(${newCards.length})`;
 
-		// Sync remove button
 		const headerEl = columnEl.querySelector<HTMLElement>(`.${CSS_CLASSES.COLUMN_HEADER}`);
 		if (headerEl) {
 			const columnValue = columnEl.getAttribute(DATA_ATTRIBUTES.COLUMN_VALUE);
@@ -262,7 +304,6 @@ export class FolderKanbanView extends ItemView {
 			}
 		}
 
-		// Remove cards not in new set
 		const newPaths = new Set(newCards.map((c) => c.filePath));
 		body.querySelectorAll(`.${CSS_CLASSES.CARD}`).forEach((card) => {
 			if (card instanceof HTMLElement) {
@@ -271,7 +312,6 @@ export class FolderKanbanView extends ItemView {
 			}
 		});
 
-		// Add missing cards
 		const existingPaths = new Set<string>();
 		body.querySelectorAll(`.${CSS_CLASSES.CARD}`).forEach((card) => {
 			if (card instanceof HTMLElement) {
@@ -285,7 +325,6 @@ export class FolderKanbanView extends ItemView {
 			}
 		}
 
-		// Reorder cards (skip during drags)
 		if (!this._dragging) {
 			const pathToCard = new Map<string, Element>();
 			body.querySelectorAll(`.${CSS_CLASSES.CARD}`).forEach((card) => {
@@ -307,11 +346,9 @@ export class FolderKanbanView extends ItemView {
 		columnEl.className = CSS_CLASSES.COLUMN;
 		columnEl.setAttribute(DATA_ATTRIBUTES.COLUMN_VALUE, col.folderName);
 
-		// Apply stored color accent
-		const colorName = this.plugin.state.columnColors[col.folderName] ?? null;
+		const colorName = this._prefs.columnColors[col.folderName] ?? null;
 		this.applyColumnColor(columnEl, colorName);
 
-		// Header
 		const headerEl = columnEl.createDiv({ cls: CSS_CLASSES.COLUMN_HEADER });
 
 		if (!isUnsorted) {
@@ -330,12 +367,10 @@ export class FolderKanbanView extends ItemView {
 		headerEl.createSpan({ text: col.folderName, cls: CSS_CLASSES.COLUMN_TITLE });
 		headerEl.createSpan({ text: `(${col.cards.length})`, cls: CSS_CLASSES.COLUMN_COUNT });
 
-		// Remove button — only for non-Unsorted empty columns
 		if (col.cards.length === 0 && !isUnsorted) {
 			headerEl.appendChild(this.createRemoveButton(col.folderName, columnEl));
 		}
 
-		// Body
 		const bodyEl = columnEl.createDiv({ cls: CSS_CLASSES.COLUMN_BODY });
 		bodyEl.setAttribute(DATA_ATTRIBUTES.SORTABLE_CONTAINER, 'true');
 
@@ -354,14 +389,15 @@ export class FolderKanbanView extends ItemView {
 		const titleEl = cardEl.createDiv({ cls: CSS_CLASSES.CARD_TITLE });
 		titleEl.textContent = card.fileName;
 
-		// JS-managed hover
 		cardEl.addEventListener('mouseenter', () => cardEl.classList.add(CSS_CLASSES.CARD_HOVER));
 		cardEl.addEventListener('mouseleave', () => cardEl.classList.remove(CSS_CLASSES.CARD_HOVER));
 
 		cardEl.addEventListener('click', (e: MouseEvent) => {
 			if (e.target instanceof Element && e.target.closest('a')) return;
 			this.setActiveCard(card.filePath);
-			void this.app.workspace.openLinkText(card.filePath, '', false);
+			if (this.app?.workspace) {
+				void this.app.workspace.openLinkText(card.filePath, '', false);
+			}
 		});
 
 		return cardEl;
@@ -397,8 +433,8 @@ export class FolderKanbanView extends ItemView {
 		noneSwatch.title = 'No color';
 		noneSwatch.addEventListener('click', () => {
 			this.applyColumnColor(columnEl, null);
-			delete this.plugin.state.columnColors[columnValue];
-			void this.plugin.saveSettings();
+			delete this._prefs.columnColors[columnValue];
+			this._persistPrefs();
 			popover.remove();
 			this.activeColorPicker = null;
 		});
@@ -412,8 +448,8 @@ export class FolderKanbanView extends ItemView {
 			if (currentColor === color.name) swatch.classList.add(CSS_CLASSES.COLUMN_COLOR_SWATCH_ACTIVE);
 			swatch.addEventListener('click', () => {
 				this.applyColumnColor(columnEl, color.name);
-				this.plugin.state.columnColors[columnValue] = color.name;
-				void this.plugin.saveSettings();
+				this._prefs.columnColors[columnValue] = color.name;
+				this._persistPrefs();
 				popover.remove();
 				this.activeColorPicker = null;
 			});
@@ -461,8 +497,8 @@ export class FolderKanbanView extends ItemView {
 	}
 
 	private removeColumn(value: string, columnEl: HTMLElement): void {
-		this.plugin.state.columnOrder = this.plugin.state.columnOrder.filter((v) => v !== value);
-		void this.plugin.saveSettings();
+		this._prefs.columnOrder = this._prefs.columnOrder.filter((v) => v !== value);
+		this._persistPrefs();
 		this.detachColumn(value, columnEl);
 	}
 
@@ -490,7 +526,7 @@ export class FolderKanbanView extends ItemView {
 
 	private initializeSortable(): void {
 		const selector = `.${CSS_CLASSES.COLUMN_BODY}[${DATA_ATTRIBUTES.SORTABLE_CONTAINER}]`;
-		this.contentEl.querySelectorAll(selector).forEach((columnBody) => {
+		this.containerEl.querySelectorAll(selector).forEach((columnBody) => {
 			if (!(columnBody instanceof HTMLElement)) return;
 			const colEl = columnBody.closest(`.${CSS_CLASSES.COLUMN}`);
 			const value = colEl instanceof HTMLElement ? colEl.getAttribute(DATA_ATTRIBUTES.COLUMN_VALUE) : null;
@@ -502,7 +538,7 @@ export class FolderKanbanView extends ItemView {
 	private initializeColumnSortable(): void {
 		if (this.columnSortable) this.columnSortable.destroy();
 
-		const boardEl = this.contentEl.querySelector(`.${CSS_CLASSES.BOARD}`);
+		const boardEl = this.containerEl.querySelector(`.${CSS_CLASSES.BOARD}`);
 		if (!boardEl || !(boardEl instanceof HTMLElement)) return;
 
 		this.columnSortable = new Sortable(boardEl, {
@@ -549,41 +585,42 @@ export class FolderKanbanView extends ItemView {
 
 		// Same-column reorder
 		if (oldColumnValue === newColumnValue) {
-			this.plugin.state.cardOrders[newColumnValue] = getColumnPaths(evt.to);
-			void this.plugin.saveSettings();
+			this._prefs.cardOrders[newColumnValue] = getColumnPaths(evt.to);
+			this._persistPrefs();
 			return;
 		}
 
 		// Cross-column: save card orders for both columns
 		if (oldColumnEl instanceof HTMLElement && oldColumnValue) {
 			const oldBody = oldColumnEl.querySelector(`.${CSS_CLASSES.COLUMN_BODY}`);
-			if (oldBody) this.plugin.state.cardOrders[oldColumnValue] = getColumnPaths(oldBody);
+			if (oldBody) this._prefs.cardOrders[oldColumnValue] = getColumnPaths(oldBody);
 		}
-		this.plugin.state.cardOrders[newColumnValue] = getColumnPaths(evt.to);
-		void this.plugin.saveSettings();
+		this._prefs.cardOrders[newColumnValue] = getColumnPaths(evt.to);
+		this._persistPrefs();
 
 		// Move the file
-		const file = this.app.vault.getAbstractFileByPath(entryPath);
+		const rootFolder = this.getRootFolder();
+		if (!rootFolder) return;
+
+		const file = this.app?.vault.getAbstractFileByPath(entryPath);
 		if (!file || !('extension' in file)) {
 			console.warn('File not found:', entryPath);
 			this.render();
 			return;
 		}
 
-		const rootFolder = this.plugin.state.settings.rootFolder;
 		const fileName = file.name;
 		const targetFolder = newColumnValue === UNSORTED_LABEL ? rootFolder : rootFolder + '/' + newColumnValue;
 		const newPath = targetFolder + '/' + fileName;
 
-		// Check for name collision
-		if (this.app.vault.getAbstractFileByPath(newPath)) {
+		if (this.app?.vault.getAbstractFileByPath(newPath)) {
 			new Notice(`A file named "${fileName}" already exists in "${newColumnValue}".`);
-			this.render(); // Revert DOM to actual state
+			this.render();
 			return;
 		}
 
 		try {
-			await this.app.vault.rename(file, newPath);
+			await this.app?.vault.rename(file, newPath);
 		} catch (error) {
 			console.error('Error moving file:', error);
 			new Notice(`Failed to move "${fileName}".`);
@@ -591,22 +628,22 @@ export class FolderKanbanView extends ItemView {
 		}
 	}
 
-	private handleColumnDrop(evt: Sortable.SortableEvent): void {
-		const columns = this.contentEl.querySelectorAll(`.${CSS_CLASSES.COLUMN}`);
+	private handleColumnDrop(_evt: Sortable.SortableEvent): void {
+		const columns = this.containerEl.querySelectorAll(`.${CSS_CLASSES.COLUMN}`);
 		const order = Array.from(columns)
 			.map((col) => col.getAttribute(DATA_ATTRIBUTES.COLUMN_VALUE))
 			.filter((v): v is string => v !== null && v !== UNSORTED_LABEL);
 
-		this.plugin.state.columnOrder = order;
-		void this.plugin.saveSettings();
+		this._prefs.columnOrder = order;
+		this._persistPrefs();
 	}
 
 	// ── Helpers ────────────────────────────────────────────────────
 
 	private getOrderedColumnNames(liveNames: string[]): string[] {
-		if (!this.plugin.state.columnOrder.length) return liveNames.sort();
-		const newNames = liveNames.filter((n) => !this.plugin.state.columnOrder.includes(n));
-		return [...this.plugin.state.columnOrder, ...newNames];
+		if (!this._prefs.columnOrder.length) return liveNames.sort();
+		const newNames = liveNames.filter((n) => !this._prefs.columnOrder.includes(n));
+		return [...this._prefs.columnOrder, ...newNames];
 	}
 
 	private applyCardOrder(cards: CardData[], savedOrder: string[]): CardData[] {
@@ -618,7 +655,7 @@ export class FolderKanbanView extends ItemView {
 
 	private findCardEl(path: string): HTMLElement | null {
 		return (
-			Array.from(this.contentEl.querySelectorAll<HTMLElement>(`.${CSS_CLASSES.CARD}`)).find(
+			Array.from(this.containerEl.querySelectorAll<HTMLElement>(`.${CSS_CLASSES.CARD}`)).find(
 				(el) => el.getAttribute(DATA_ATTRIBUTES.ENTRY_PATH) === path,
 			) ?? null
 		);
@@ -637,5 +674,23 @@ export class FolderKanbanView extends ItemView {
 	private reapplyActiveCard(): void {
 		if (!this._activeCardPath) return;
 		this.findCardEl(this._activeCardPath)?.classList.add(CSS_CLASSES.CARD_ACTIVE);
+	}
+
+	onClose(): void {
+		this._debouncedRender.cancel();
+		this.destroySortables();
+		this.activeColorPicker?.remove();
+		this.activeColorPicker = null;
+	}
+
+	static getViewOptions(this: void): ViewOption[] {
+		return [
+			{
+				displayName: 'Root folder',
+				type: 'folder',
+				key: 'rootFolder',
+				placeholder: 'Select folder',
+			},
+		];
 	}
 }

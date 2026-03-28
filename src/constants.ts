@@ -83,7 +83,7 @@ export const DEBOUNCE_DELAY = 50;
 
 /** Empty state messages */
 export const EMPTY_STATE_MESSAGES = {
-	NO_ROOT_FOLDER: 'No root folder configured. Set one in Settings \u2192 Folder Based Kanban.',
-	NO_SUBFOLDERS: 'No subfolders found in the root folder.',
-	ROOT_NOT_FOUND: 'Root folder not found. Check your settings.',
+	NO_ENTRIES: 'No entries found. Add some notes to your base.',
+	NO_ROOT_FOLDER: 'No root folder selected. Choose one in the view options.',
+	NO_SUBFOLDERS: 'No entries match subfolders of the selected root folder.',
 } as const;

@@ -1,69 +1,67 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert';
-import FolderKanbanPlugin, { VIEW_TYPE_FOLDER_KANBAN } from '../src/main.ts';
-import { setupTestEnvironment, createMockApp } from './helpers.ts';
+import FolderKanbanPlugin, { KANBAN_VIEW_TYPE } from '../src/main.ts';
+import { FolderKanbanView } from '../src/kanbanView.ts';
+import { setupTestEnvironment, createDivWithMethods, createMockQueryController } from './helpers.ts';
 
 setupTestEnvironment();
 
 describe('Plugin Registration', () => {
-	test('VIEW_TYPE_FOLDER_KANBAN is defined', () => {
-		assert.strictEqual(VIEW_TYPE_FOLDER_KANBAN, 'folder-kanban-view');
+	test('KANBAN_VIEW_TYPE is defined', () => {
+		assert.strictEqual(KANBAN_VIEW_TYPE, 'folder-kanban-view');
 	});
 
-	test('Plugin loads and registers view, command, ribbon, and settings tab', async () => {
-		const app = createMockApp();
-		const plugin = new FolderKanbanPlugin(app as any, {} as any);
-		plugin.loadData = async () => null;
-
+	test('Plugin registers BasesView correctly', async () => {
 		let registeredViewType: string | null = null;
-		let registeredCommand: any = null;
-		let registeredRibbon = false;
-		let registeredSettingsTab = false;
+		let registeredName: string | null = null;
+		let registeredIcon: string | null = null;
 
-		plugin.registerView = (type: string, _factory: any) => {
-			registeredViewType = type;
-		};
-		plugin.addCommand = (cmd: any) => {
-			registeredCommand = cmd;
-			return cmd;
-		};
-		plugin.addRibbonIcon = (_icon: string, _title: string, _cb: any) => {
-			registeredRibbon = true;
-			return document.createElement('div');
-		};
-		plugin.addSettingTab = (_tab: any) => {
-			registeredSettingsTab = true;
+		const mockApp = {} as any;
+		const plugin = new FolderKanbanPlugin(mockApp, {} as any);
+
+		(plugin as any).registerBasesView = function (viewType: string, options: any) {
+			registeredViewType = viewType;
+			registeredName = options.name;
+			registeredIcon = options.icon;
+
+			const scrollEl = createDivWithMethods();
+			const controller = createMockQueryController();
+			options.factory(controller, scrollEl);
 		};
 
 		await plugin.onload();
 
-		assert.strictEqual(registeredViewType, VIEW_TYPE_FOLDER_KANBAN);
-		assert.ok(registeredCommand, 'Command should be registered');
-		assert.strictEqual(registeredCommand.id, 'open-folder-kanban');
-		assert.ok(registeredRibbon, 'Ribbon icon should be registered');
-		assert.ok(registeredSettingsTab, 'Settings tab should be registered');
+		assert.strictEqual(registeredViewType, KANBAN_VIEW_TYPE);
+		assert.strictEqual(registeredName, 'Folder kanban');
+		assert.strictEqual(registeredIcon, 'columns-3');
 	});
 
-	test('loadSettings merges with defaults', async () => {
-		const app = createMockApp();
-		const plugin = new FolderKanbanPlugin(app as any, {} as any);
-		plugin.loadData = async () => ({ settings: { rootFolder: 'MyBoard' }, columnColors: { Todo: 'red' } });
+	test('Factory returns FolderKanbanView instance', async () => {
+		const mockApp = {} as any;
+		const plugin = new FolderKanbanPlugin(mockApp, {} as any);
 
-		await plugin.loadSettings();
+		let factoryFn: any = null;
+		(plugin as any).registerBasesView = function (_viewType: string, options: any) {
+			factoryFn = options.factory;
+		};
 
-		assert.strictEqual(plugin.state.settings.rootFolder, 'MyBoard');
-		assert.deepStrictEqual(plugin.state.columnColors, { Todo: 'red' });
-		assert.deepStrictEqual(plugin.state.columnOrder, []);
+		await plugin.onload();
+
+		assert.ok(factoryFn);
+		const scrollEl = createDivWithMethods();
+		const controller = createMockQueryController();
+		const view = factoryFn(controller, scrollEl);
+		assert.ok(view instanceof FolderKanbanView);
 	});
+});
 
-	test('loadSettings handles null data', async () => {
-		const app = createMockApp();
-		const plugin = new FolderKanbanPlugin(app as any, {} as any);
-		plugin.loadData = async () => null;
+describe('View Options', () => {
+	test('getViewOptions returns folder option', () => {
+		const options = FolderKanbanView.getViewOptions();
 
-		await plugin.loadSettings();
-
-		assert.strictEqual(plugin.state.settings.rootFolder, '');
-		assert.deepStrictEqual(plugin.state.columnOrder, []);
+		assert.strictEqual(options.length, 1);
+		assert.strictEqual(options[0].displayName, 'Root folder');
+		assert.strictEqual(options[0].type, 'folder');
+		assert.strictEqual(options[0].key, 'rootFolder');
 	});
 });
