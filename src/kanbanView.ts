@@ -605,7 +605,6 @@ export class FolderKanbanView extends BasesView {
 				if (evt.item instanceof HTMLElement) evt.item.classList.remove(CSS_CLASSES.CARD_HOVER);
 			},
 			onEnd: (evt: Sortable.SortableEvent) => {
-				this._dragging = false;
 				this.setActiveCard(null);
 				void this.handleCardDrop(evt);
 			},
@@ -650,22 +649,34 @@ export class FolderKanbanView extends BasesView {
 	// ── Drag-drop handlers ────────────────────────────────────────
 
 	private async handleCardDrop(evt: Sortable.SortableEvent): Promise<void> {
-		if (!(evt.item instanceof HTMLElement)) return;
+		if (!(evt.item instanceof HTMLElement)) {
+			this._dragging = false;
+			return;
+		}
 
 		const cardEl = evt.item;
 		const entryPath = cardEl.getAttribute(DATA_ATTRIBUTES.ENTRY_PATH);
-		if (!entryPath) return;
+		if (!entryPath) {
+			this._dragging = false;
+			return;
+		}
 
 		const columnSelector = `.${CSS_CLASSES.COLUMN}`;
 		const oldColumnEl = evt.from.closest(columnSelector);
 		const newColumnEl = evt.to.closest(columnSelector);
 
-		if (!newColumnEl || !(newColumnEl instanceof HTMLElement)) return;
+		if (!newColumnEl || !(newColumnEl instanceof HTMLElement)) {
+			this._dragging = false;
+			return;
+		}
 
 		const oldColumnValue =
 			oldColumnEl instanceof HTMLElement ? oldColumnEl.getAttribute(DATA_ATTRIBUTES.COLUMN_VALUE) : null;
 		const newColumnValue = newColumnEl.getAttribute(DATA_ATTRIBUTES.COLUMN_VALUE);
-		if (!newColumnValue) return;
+		if (!newColumnValue) {
+			this._dragging = false;
+			return;
+		}
 
 		const getColumnPaths = (bodyEl: Element): string[] =>
 			Array.from(bodyEl.querySelectorAll(`.${CSS_CLASSES.CARD}`))
@@ -676,6 +687,7 @@ export class FolderKanbanView extends BasesView {
 		if (oldColumnValue === newColumnValue) {
 			this._prefs.cardOrders[newColumnValue] = getColumnPaths(evt.to);
 			this._persistPrefs();
+			this._dragging = false;
 			return;
 		}
 
@@ -687,13 +699,18 @@ export class FolderKanbanView extends BasesView {
 		this._prefs.cardOrders[newColumnValue] = getColumnPaths(evt.to);
 		this._persistPrefs();
 
-		// Move the file
+		// Move the file — keep _dragging true until rename completes so
+		// re-renders triggered by the rename don't revert the card position.
 		const rootFolder = this.getRootFolder();
-		if (!rootFolder) return;
+		if (!rootFolder) {
+			this._dragging = false;
+			return;
+		}
 
 		const file = this.app?.vault.getAbstractFileByPath(entryPath);
 		if (!file || !('extension' in file)) {
 			console.warn('File not found:', entryPath);
+			this._dragging = false;
 			await this.render();
 			return;
 		}
@@ -704,16 +721,21 @@ export class FolderKanbanView extends BasesView {
 
 		if (this.app?.vault.getAbstractFileByPath(newPath)) {
 			new Notice(`A file named "${fileName}" already exists in "${newColumnValue}".`);
+			this._dragging = false;
 			await this.render();
 			return;
 		}
 
 		try {
 			await this.app?.vault.rename(file, newPath);
+			// Update the card's path attribute so the next render finds it at its new location
+			cardEl.setAttribute(DATA_ATTRIBUTES.ENTRY_PATH, newPath);
 		} catch (error) {
 			console.error('Error moving file:', error);
 			new Notice(`Failed to move "${fileName}".`);
 			await this.render();
+		} finally {
+			this._dragging = false;
 		}
 	}
 
