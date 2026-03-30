@@ -15,34 +15,47 @@ import type { CardData, ColumnData } from './types.ts';
 import type { DebouncedFn } from './utils/debounce.ts';
 import { debounce } from './utils/debounce.ts';
 
+/** Extract the first ~200 chars of body text, stripping frontmatter and headings. */
+function extractPreview(content: string, maxLen = 200): string {
+	let start = 0;
+	// Skip YAML frontmatter
+	if (content.startsWith('---')) {
+		const endIdx = content.indexOf('---', 3);
+		if (endIdx !== -1) start = endIdx + 3;
+	}
+
+	let result = '';
+	let i = start;
+	while (i < content.length && result.length < maxLen) {
+		// Find next line
+		const nlIdx = content.indexOf('\n', i);
+		const lineEnd = nlIdx === -1 ? content.length : nlIdx;
+		const line = content.slice(i, lineEnd).trim();
+		i = lineEnd + 1;
+
+		if (!line || line.startsWith('#')) continue;
+		if (result) result += ' ';
+		result += line;
+	}
+
+	return result.length > maxLen ? result.slice(0, maxLen) + '\u2026' : result;
+}
+
 /**
  * Groups BasesEntry[] by their parent folder relative to rootFolder.
  * Entries whose path starts with rootFolder/<subfolder>/ are grouped by subfolder name.
  * Entries directly in rootFolder go to "Unsorted".
  * Entries outside rootFolder are ignored.
  */
-/** Extract the first ~200 chars of body text, stripping frontmatter and headings. */
-function extractPreview(content: string, maxLen = 200): string {
-	let body = content;
-	// Strip YAML frontmatter
-	if (body.startsWith('---')) {
-		const endIdx = body.indexOf('---', 3);
-		if (endIdx !== -1) body = body.slice(endIdx + 3);
-	}
-	// Strip lines that are headings or empty
-	const lines = body
-		.split('\n')
-		.map((l) => l.trim())
-		.filter((l) => l && !l.startsWith('#'));
-	const text = lines.join(' ').trim();
-	return text.length > maxLen ? text.slice(0, maxLen) + '\u2026' : text;
-}
-
 function groupEntriesByFolder(
 	entries: BasesEntry[],
 	rootFolder: string,
-	metadataCache?: { getFileCache(file: BasesEntry['file']): CachedMetadata | null },
-	fileContents?: Map<string, string>,
+	options?: {
+		metadataCache?: { getFileCache(file: BasesEntry['file']): CachedMetadata | null };
+		fileContents?: Map<string, string>;
+		showTags?: boolean;
+		showPreview?: boolean;
+	},
 ): Map<string, { col: ColumnData; entries: BasesEntry[] }> {
 	const groups = new Map<string, { col: ColumnData; entries: BasesEntry[] }>();
 	const prefix = rootFolder + '/';
@@ -69,10 +82,13 @@ function groupEntriesByFolder(
 			});
 		}
 
-		const cache = metadataCache?.getFileCache(entry.file);
-		const tags = cache ? (getAllTags(cache) ?? []) : [];
-		const content = fileContents?.get(path) ?? '';
-		const preview = extractPreview(content);
+		let tags: string[] = [];
+		if (options?.showTags !== false && options?.metadataCache) {
+			const cache = options.metadataCache.getFileCache(entry.file);
+			if (cache) tags = getAllTags(cache) ?? [];
+		}
+		const preview =
+			options?.showPreview !== false && options?.fileContents ? extractPreview(options.fileContents.get(path) ?? '') : '';
 
 		const group = groups.get(folderName);
 		if (group) {
@@ -93,6 +109,7 @@ export class FolderKanbanView extends BasesView {
 	private columnSortable: Sortable | null = null;
 	private _debouncedRender: DebouncedFn<() => void>;
 	private activeColorPicker: HTMLElement | null = null;
+	private _dismissColorPicker: (() => void) | null = null;
 	private _dragging = false;
 	private _activeCardPath: string | null = null;
 	private _cardLeaf: import('obsidian').WorkspaceLeaf | null = null;
@@ -190,7 +207,13 @@ export class FolderKanbanView extends BasesView {
 				await Promise.all(reads);
 			}
 
-			const groups = groupEntriesByFolder(entries, rootFolder, this.app?.metadataCache, fileContents);
+			const showTags = this.config?.get('showTags') !== false;
+			const groups = groupEntriesByFolder(entries, rootFolder, {
+				metadataCache: showTags ? this.app?.metadataCache : undefined,
+				fileContents: showPreview ? fileContents : undefined,
+				showTags,
+				showPreview,
+			});
 
 			// Ensure all actual subfolders of the root appear as columns, even if empty
 			const rootAbstract = this.app?.vault.getAbstractFileByPath(rootFolder);
@@ -355,18 +378,15 @@ export class FolderKanbanView extends BasesView {
 		}
 
 		const newPaths = new Set(newCards.map((c) => c.filePath));
-		body.querySelectorAll(`.${CSS_CLASSES.CARD}`).forEach((card) => {
-			if (card instanceof HTMLElement) {
-				const path = card.getAttribute(DATA_ATTRIBUTES.ENTRY_PATH);
-				if (path && !newPaths.has(path)) card.remove();
-			}
-		});
-
 		const existingPaths = new Set<string>();
 		body.querySelectorAll(`.${CSS_CLASSES.CARD}`).forEach((card) => {
 			if (card instanceof HTMLElement) {
 				const path = card.getAttribute(DATA_ATTRIBUTES.ENTRY_PATH);
-				if (path) existingPaths.add(path);
+				if (path && !newPaths.has(path)) {
+					card.remove();
+				} else if (path) {
+					existingPaths.add(path);
+				}
 			}
 		});
 		for (const card of newCards) {
@@ -482,6 +502,7 @@ export class FolderKanbanView extends BasesView {
 	}
 
 	private openColorPicker(anchorEl: HTMLElement, columnEl: HTMLElement, columnValue: string): void {
+		this._dismissColorPicker?.();
 		this.activeColorPicker?.remove();
 		this.activeColorPicker = null;
 
@@ -527,12 +548,17 @@ export class FolderKanbanView extends BasesView {
 
 		const dismiss = (e: MouseEvent) => {
 			if (e.target instanceof Node && !popover.contains(e.target) && e.target !== anchorEl) {
-				popover.remove();
-				this.activeColorPicker = null;
-				document.removeEventListener('click', dismiss);
+				cleanup();
 			}
 		};
+		const cleanup = () => {
+			popover.remove();
+			this.activeColorPicker = null;
+			this._dismissColorPicker = null;
+			document.removeEventListener('click', dismiss);
+		};
 		document.addEventListener('click', dismiss);
+		this._dismissColorPicker = cleanup;
 	}
 
 	// ── Column management ─────────────────────────────────────────
@@ -757,8 +783,10 @@ export class FolderKanbanView extends BasesView {
 	onClose(): void {
 		this._debouncedRender.cancel();
 		this.destroySortables();
+		this._dismissColorPicker?.();
 		this.activeColorPicker?.remove();
 		this.activeColorPicker = null;
+		this._cardLeaf = null;
 	}
 
 	static getViewOptions(this: void): ViewOption[] {
