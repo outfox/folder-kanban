@@ -99,7 +99,7 @@ export function createMockApp(fileTree?: Map<string, any>): App {
 			cachedRead: async () => '',
 		},
 		metadataCache: {
-			getFileCache: () => null,
+			getFileCache: (): null => null,
 		},
 		workspace: {
 			openLinkText,

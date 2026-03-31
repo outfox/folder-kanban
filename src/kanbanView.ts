@@ -110,7 +110,13 @@ export class FolderKanbanView extends BasesView {
 	private _debouncedRender: DebouncedFn<() => void>;
 	private activeColorPicker: HTMLElement | null = null;
 	private _dismissColorPicker: (() => void) | null = null;
-	private _dragging = false;
+	private _dragCount = 0;
+
+	/** Decrement drag counter and schedule a render if all drags are done. */
+	private _endDrag(): void {
+		this._dragCount--;
+		if (this._dragCount === 0) this._debouncedRender();
+	}
 	private _activeCardPath: string | null = null;
 	private _cardLeaf: import('obsidian').WorkspaceLeaf | null = null;
 
@@ -175,6 +181,11 @@ export class FolderKanbanView extends BasesView {
 	// ── Rendering ─────────────────────────────────────────────────
 
 	private async render(): Promise<void> {
+		// Don't render while a drag is in flight — the data model and DOM are
+		// temporarily out of sync.  A render will be scheduled once all drags
+		// complete (see handleCardDrop / column-sortable onEnd).
+		if (this._dragCount > 0) return;
+
 		try {
 			const entries = this.data?.data || [];
 
@@ -377,25 +388,28 @@ export class FolderKanbanView extends BasesView {
 			}
 		}
 
-		const newPaths = new Set(newCards.map((c) => c.filePath));
-		const existingPaths = new Set<string>();
+		const newCardMap = new Map(newCards.map((c) => [c.filePath, c]));
+		const existingCards = new Map<string, HTMLElement>();
 		body.querySelectorAll(`.${CSS_CLASSES.CARD}`).forEach((card) => {
 			if (card instanceof HTMLElement) {
 				const path = card.getAttribute(DATA_ATTRIBUTES.ENTRY_PATH);
-				if (path && !newPaths.has(path)) {
+				if (path && !newCardMap.has(path)) {
 					card.remove();
 				} else if (path) {
-					existingPaths.add(path);
+					existingCards.set(path, card);
 				}
 			}
 		});
 		for (const card of newCards) {
-			if (!existingPaths.has(card.filePath)) {
+			const existing = existingCards.get(card.filePath);
+			if (existing) {
+				this.updateCardContent(existing, card);
+			} else {
 				body.appendChild(this.createCard(card));
 			}
 		}
 
-		if (!this._dragging) {
+		if (this._dragCount === 0) {
 			const pathToCard = new Map<string, Element>();
 			body.querySelectorAll(`.${CSS_CLASSES.CARD}`).forEach((card) => {
 				const path = card instanceof HTMLElement ? card.getAttribute(DATA_ATTRIBUTES.ENTRY_PATH) : null;
@@ -484,6 +498,44 @@ export class FolderKanbanView extends BasesView {
 		});
 
 		return cardEl;
+	}
+
+	private updateCardContent(cardEl: HTMLElement, card: CardData): void {
+		const titleEl = cardEl.querySelector(`.${CSS_CLASSES.CARD_TITLE}`);
+		if (titleEl) titleEl.textContent = card.fileName;
+
+		const showTags = this.config?.get('showTags') !== false;
+		const existingTagsEl = cardEl.querySelector<HTMLElement>(`.${CSS_CLASSES.CARD_TAGS}`);
+		if (showTags && card.tags.length > 0) {
+			const tagsEl = existingTagsEl ?? cardEl.createDiv({ cls: CSS_CLASSES.CARD_TAGS });
+			tagsEl.textContent = '';
+			for (const tag of card.tags) {
+				tagsEl.createSpan({ text: tag, cls: CSS_CLASSES.CARD_TAG });
+			}
+			// Insert after title if newly created
+			if (!existingTagsEl) {
+				const previewEl = cardEl.querySelector(`.${CSS_CLASSES.CARD_PREVIEW}`);
+				if (previewEl) {
+					cardEl.insertBefore(tagsEl, previewEl);
+				} else {
+					cardEl.appendChild(tagsEl);
+				}
+			}
+		} else if (existingTagsEl) {
+			existingTagsEl.remove();
+		}
+
+		const showPreview = this.config?.get('showPreview') !== false;
+		const existingPreviewEl = cardEl.querySelector(`.${CSS_CLASSES.CARD_PREVIEW}`);
+		if (showPreview && card.preview) {
+			if (existingPreviewEl) {
+				existingPreviewEl.textContent = card.preview;
+			} else {
+				cardEl.createDiv({ text: card.preview, cls: CSS_CLASSES.CARD_PREVIEW });
+			}
+		} else if (existingPreviewEl) {
+			existingPreviewEl.remove();
+		}
 	}
 
 	// ── Column color ──────────────────────────────────────────────
@@ -601,7 +653,7 @@ export class FolderKanbanView extends BasesView {
 			ghostClass: CSS_CLASSES.CARD_GHOST,
 			chosenClass: CSS_CLASSES.CARD_CHOSEN,
 			onStart: (evt: Sortable.SortableEvent) => {
-				this._dragging = true;
+				this._dragCount++;
 				if (evt.item instanceof HTMLElement) evt.item.classList.remove(CSS_CLASSES.CARD_HOVER);
 			},
 			onEnd: (evt: Sortable.SortableEvent) => {
@@ -637,10 +689,10 @@ export class FolderKanbanView extends BasesView {
 			dragClass: CSS_CLASSES.COLUMN_DRAGGING,
 			filter: `[${DATA_ATTRIBUTES.COLUMN_VALUE}="${UNSORTED_LABEL}"]`,
 			onStart: () => {
-				this._dragging = true;
+				this._dragCount++;
 			},
 			onEnd: (evt: Sortable.SortableEvent) => {
-				this._dragging = false;
+				this._endDrag();
 				this.handleColumnDrop(evt);
 			},
 		});
@@ -650,14 +702,14 @@ export class FolderKanbanView extends BasesView {
 
 	private async handleCardDrop(evt: Sortable.SortableEvent): Promise<void> {
 		if (!(evt.item instanceof HTMLElement)) {
-			this._dragging = false;
+			this._endDrag();
 			return;
 		}
 
 		const cardEl = evt.item;
 		const entryPath = cardEl.getAttribute(DATA_ATTRIBUTES.ENTRY_PATH);
 		if (!entryPath) {
-			this._dragging = false;
+			this._endDrag();
 			return;
 		}
 
@@ -666,7 +718,7 @@ export class FolderKanbanView extends BasesView {
 		const newColumnEl = evt.to.closest(columnSelector);
 
 		if (!newColumnEl || !(newColumnEl instanceof HTMLElement)) {
-			this._dragging = false;
+			this._endDrag();
 			return;
 		}
 
@@ -674,7 +726,7 @@ export class FolderKanbanView extends BasesView {
 			oldColumnEl instanceof HTMLElement ? oldColumnEl.getAttribute(DATA_ATTRIBUTES.COLUMN_VALUE) : null;
 		const newColumnValue = newColumnEl.getAttribute(DATA_ATTRIBUTES.COLUMN_VALUE);
 		if (!newColumnValue) {
-			this._dragging = false;
+			this._endDrag();
 			return;
 		}
 
@@ -687,7 +739,7 @@ export class FolderKanbanView extends BasesView {
 		if (oldColumnValue === newColumnValue) {
 			this._prefs.cardOrders[newColumnValue] = getColumnPaths(evt.to);
 			this._persistPrefs();
-			this._dragging = false;
+			this._endDrag();
 			return;
 		}
 
@@ -699,18 +751,18 @@ export class FolderKanbanView extends BasesView {
 		this._prefs.cardOrders[newColumnValue] = getColumnPaths(evt.to);
 		this._persistPrefs();
 
-		// Move the file — keep _dragging true until rename completes so
+		// Move the file — keep _dragCount elevated until rename completes so
 		// re-renders triggered by the rename don't revert the card position.
 		const rootFolder = this.getRootFolder();
 		if (!rootFolder) {
-			this._dragging = false;
+			this._endDrag();
 			return;
 		}
 
 		const file = this.app?.vault.getAbstractFileByPath(entryPath);
 		if (!file || !('extension' in file)) {
 			console.warn('File not found:', entryPath);
-			this._dragging = false;
+			this._endDrag();
 			await this.render();
 			return;
 		}
@@ -721,7 +773,7 @@ export class FolderKanbanView extends BasesView {
 
 		if (this.app?.vault.getAbstractFileByPath(newPath)) {
 			new Notice(`A file named "${fileName}" already exists in "${newColumnValue}".`);
-			this._dragging = false;
+			this._endDrag();
 			await this.render();
 			return;
 		}
@@ -735,7 +787,7 @@ export class FolderKanbanView extends BasesView {
 			new Notice(`Failed to move "${fileName}".`);
 			await this.render();
 		} finally {
-			this._dragging = false;
+			this._endDrag();
 		}
 	}
 
