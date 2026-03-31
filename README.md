@@ -1,168 +1,126 @@
-# Kanban Bases View Plugin for Obsidian
+# Folder Kanban - Obsidian Bases View
 
-A kanban-style drag-and-drop custom view for Obsidian Bases that allows you to organize your notes into columns based on any property.
+A custom view for [Obsidian Bases](https://help.obsidian.md/bases) that turns a folder hierarchy into an interactive kanban board. Subfolders become columns, files become cards, and dragging a card between columns moves the file on disk.
 
 ## Demo
 
-<video src="https://github.com/user-attachments/assets/fa75825a-3e8e-4b92-97b9-0216cabde08d" controls width="100%" title="Kanban Bases View Demo - Drag and drop with color themes"></video>
+<video src="https://github.com/user-attachments/assets/fa75825a-3e8e-4b92-97b9-0216cabde08d" controls width="100%" title="Folder Kanban demo - drag and drop with color themes"></video>
 
 ## Features
 
-- **Dynamic Column Generation**: Select any property from your base to generate kanban columns automatically
-- **Drag and Drop**: Move cards between columns with smooth animations
-- **Column Reordering**: Drag columns by their handle (⋮⋮) to reorder them to your preference
-- **Column Color Themes**: Assign colors to columns using the color picker button for visual categorization
-- **Column Order Persistence**: Your column order is saved per property and persists across sessions
-- **Property Selection**: Choose which property determines your columns (e.g., "Status", "Priority", "Category")
-- **Uncategorized Entries**: Notes without a value for the selected property are automatically grouped in an "Uncategorized" column
-- **Property Display**: Selected properties are shown on each card for at-a-glance context
-- **Click to Open**: Click any card to open the corresponding note
-- **Visual Feedback**: Clear visual indicators during drag operations
-- **Responsive Design**: Works well on different screen sizes
+- **Folder-based columns**: Pick a root folder and each immediate subfolder becomes a kanban column automatically.
+- **Drag-and-drop cards**: Move cards between columns to relocate the underlying file into the target subfolder.
+- **Column reordering**: Drag columns by their handle to reorder them; your preferred order is saved across sessions.
+- **Column color themes**: Assign one of 8 accent colors to any column via a built-in color picker.
+- **Remove empty columns**: Click the remove button on an empty column to hide it.
+- **Tags and previews**: Optionally display tags and the first ~200 characters of each file on the card.
+- **File ignore list**: Exclude files by pattern (e.g. `*.base`, `template.md`) so they don't appear as cards.
+- **Click to open**: Click any card to open the note in a reused tab.
+- **Unsorted column**: Files sitting directly in the root folder (not in a subfolder) are grouped in a special "Unsorted" column.
+- **Responsive design**: Works on desktop and mobile.
 
 ## Installation
 
-### Manual Installation
+### Manual installation
 
-1. Download the latest release from the [Releases](../../releases) page
-2. Extract the plugin folder to your vault's `.obsidian/plugins/` directory
-3. Reload Obsidian
-4. Enable the plugin in Settings → Community plugins
+1. Download `main.js`, `manifest.json`, and `styles.css` from the latest [release](../../releases).
+2. Create a folder at `<your vault>/.obsidian/plugins/folder-kanban/`.
+3. Place the three files inside it.
+4. Reload Obsidian and enable the plugin in **Settings -> Community plugins**.
 
-### Development Installation
+### Development installation
 
-1. Clone this repository:
-   ```bash
-   git clone https://github.com/xiwcx/obsidian-bases-kanban-custom-view.git
-   cd obsidian-bases-kanban-custom-view
-   ```
+```bash
+git clone https://github.com/outfox/obsidian-bases-kanban.git
+cd obsidian-bases-kanban
+npm install
+npm run build
+```
 
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-
-3. Build the plugin:
-   ```bash
-   npm run build
-   ```
-
-4. Link or copy the plugin folder to your vault's `.obsidian/plugins/` directory
+Then copy or symlink the plugin folder into your vault's `.obsidian/plugins/` directory.
 
 ## Usage
 
-1. Create or open a Base in Obsidian
-2. Add a view and select "Kanban" as the view type
-3. Select the property you want to use for columns (e.g., "Status") in the "Group by" option
-4. Your notes will be automatically organized into columns based on the selected property's values
-5. Drag cards between columns to update the property value
-6. Click any card to open the corresponding note
-7. Drag columns by their handle (⋮⋮) to reorder them - your preferred order will be saved
+1. Create or open a Base in Obsidian.
+2. Add a view and select **Folder kanban** as the view type.
+3. In the view settings, select the **Root folder** whose subfolders you want as columns.
+4. Your notes will appear as cards organized by subfolder.
+5. Drag cards between columns to move files into different subfolders.
+6. Drag columns by their handle to reorder them.
+7. Click the color dot on a column header to assign an accent color.
+8. Click any card to open the corresponding note.
+
+### View settings
+
+| Setting | Default | Description |
+|---|---|---|
+| **Root folder** | — | The folder whose subfolders become columns |
+| **Show tags** | On | Display tags from file metadata on each card |
+| **Show preview** | On | Show first ~200 characters of the file body on each card |
+| **Ignored files** | `*.base` | Comma-separated filename patterns to hide from the board (supports `*` wildcards) |
+| **Column width** | 280px | Width of each column (180-500px) |
 
 ### Example
 
-If your base has a "Status" property with values "To Do", "Doing", and "Done":
-- Select "Status" in the "Group by" dropdown
-- Three columns will appear: "To Do", "Doing", and "Done" (plus an "Uncategorized" column for notes without a status)
-- Drag cards between columns to change their status
-- Click any card to open the note
-- Drag columns by their handle to reorder them - your order preference will be remembered
+Given a root folder structure like:
+
+```
+Projects/
+  To Do/
+    research.md
+    design.md
+  In Progress/
+    implementation.md
+  Done/
+    planning.md
+  Projects.base
+```
+
+Selecting `Projects` as the root folder produces three columns (**To Do**, **In Progress**, **Done**) with the corresponding files as cards. The `Projects.base` file is hidden by default thanks to the `*.base` ignore pattern.
+
+Dragging `research.md` from **To Do** to **In Progress** moves the file from `Projects/To Do/research.md` to `Projects/In Progress/research.md`.
 
 ## Development
 
 ### Prerequisites
 
-- Node.js (v24)
+- Node.js (see `.nvmrc` for version)
 - npm
 
-### Building
+### Scripts
 
-```bash
-npm run build
-```
-
-### Development Mode
-
-```bash
-npm run dev
-```
-
-This will watch for changes and rebuild automatically.
-
-### Testing
-
-```bash
-npm test
-```
-
-### Type Checking
-
-```bash
-npm run typecheck
-```
-
-### Linting and Formatting
-
-This project uses [ESLint](https://eslint.org/) for linting and [Biome](https://biomejs.dev/) for formatting. They are intentionally kept separate.
-
-**Lint** (reports rule violations):
-```bash
-npm run lint
-```
-
-**Lint with auto-fix**:
-```bash
-npm run lint:fix
-```
-
-**Format** (rewrites files):
-```bash
-npm run format
-```
-
-**Check formatting** (exits non-zero if unformatted; used by CI and the pre-commit hook):
-```bash
-npm run format:check
-```
+| Script | Purpose |
+|---|---|
+| `npm run dev` | Watch mode — rebuilds on file changes |
+| `npm run build` | Production build (type-check + bundle) |
+| `npm run typecheck` | Type-check only |
+| `npm test` | Run tests |
+| `npm run lint` | Report ESLint violations |
+| `npm run lint:fix` | Auto-fix ESLint violations |
+| `npm run format` | Format files with Biome |
+| `npm run format:check` | Check formatting (CI / pre-commit) |
 
 ### Technical notes
 
-- The plugin uses the **`.obk-`** CSS class prefix (Obsidian Bases Kanban) for all view UI classes to avoid collisions with other plugins and themes.
+- The plugin uses the **`.fbk-`** CSS class prefix (Folder Based Kanban) for all UI classes to avoid collisions with other plugins and themes.
+- Drag-and-drop is powered by [SortableJS](https://sortablejs.github.io/Sortable/).
+- Rendering is debounced and uses incremental DOM patching for performance.
 
 ## Releasing
 
-### Creating a Release
-
-1. **Update version**: Manually update the version in `manifest.json` following [Semantic Versioning](https://semver.org/).
-
-2. **Update package.json**: Ensure the version in `package.json` matches the version in `manifest.json` (the CI workflow will verify this).
-
-3. **Update versions.json**: Add an entry mapping the new version to the correct `minAppVersion` in `versions.json`.
-
-4. **Push to main**: Push your changes to the `main` branch. The GitHub Actions workflow will automatically:
-   - Run tests and verify that `manifest.json` and `package.json` versions match
-   - Verify that the version exists in `versions.json`
-   - Build the plugin (runs `npm run build`)
-   - Extract the version from the built `dist/manifest.json`
-   - Create a git tag matching the version exactly (no `v` prefix) if it doesn't already exist
-   - Create a GitHub release and upload `main.js`, `manifest.json`, and `styles.css` as release assets
-
-   Note: The release workflow only runs on pushes to `main` (not on pull requests). You can also trigger it manually from the GitHub Actions tab.
-
-5. **Submit to Obsidian Community Plugins** (first release only):
-   - Follow the [Obsidian plugin submission guidelines](https://docs.obsidian.md/Plugins/Releasing/Submit+your+plugin)
-   - Submit a PR to the [obsidian-releases](https://github.com/obsidianmd/obsidian-releases) repository
+1. Update `version` in `manifest.json` and `package.json` (must match).
+2. Add an entry in `versions.json` mapping the new version to the correct `minAppVersion`.
+3. Push to `main`. The GitHub Actions workflow will build, tag, and create a release with `main.js`, `manifest.json`, and `styles.css` as assets.
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome! Please feel free to submit a pull request.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
 
 ## Acknowledgments
 
-- Built with [SortableJS](https://sortablejs.github.io/Sortable/) for drag-and-drop functionality
-- Inspired by the need for better task management in Obsidian Bases
-
+- Built with [SortableJS](https://sortablejs.github.io/Sortable/) for drag-and-drop functionality.
+- Designed for the [Obsidian Bases](https://help.obsidian.md/bases) custom views API.

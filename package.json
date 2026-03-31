@@ -1,7 +1,7 @@
 {
 	"name": "folder-based-kanban",
-	"version": "0.5.0",
-	"description": "A kanban board where subfolders become columns and dragging cards moves files between folders.",
+	"version": "0.6.0",
+	"description": "A kanban board that uses subfolders as statuses.",
 	"main": "main.js",
 	"imports": {
 		"obsidian": "./tests/mocks/obsidian.ts",

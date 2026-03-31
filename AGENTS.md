@@ -1,27 +1,63 @@
-## Kanban view for Obsidian Bases
+## Folder Kanban - Obsidian Bases view plugin
 
-Adds a kanban layout to [Obsidian Bases](https://help.obsidian.md/bases) so you can display notes as an interactive kanban view.
+A custom [Obsidian Bases](https://help.obsidian.md/bases) view that turns a folder hierarchy into an interactive kanban board. Subfolders of a chosen root become columns; files within those subfolders become draggable cards. Dragging a card across columns moves the underlying file into the target subfolder.
 
-- Dynamically display markers that match your filters.
-- Use marker icons and colors defined by properties.
-- Load custom background tiles.
-- Define default zoom options.
+### How it works
+
+1. The user picks a **root folder** in the view settings.
+2. Each immediate subfolder of that root becomes a **column**.
+3. Files inside each subfolder become **cards** displayed in that column.
+4. Files sitting directly in the root (not in a subfolder) appear in a special **Unsorted** column.
+5. Dragging a card to another column calls `vault.rename()` to move the file into the corresponding subfolder.
+6. Column order, card order, and column colors are persisted via `this.config` (Bases view config).
+
+### View settings (defined in `getViewOptions()`)
+
+| Setting | Type | Default | Description |
+|---|---|---|---|
+| Root folder | folder picker | — | The folder whose subfolders become columns |
+| Show tags | toggle | `true` | Display tags extracted from file metadata on cards |
+| Show preview | toggle | `true` | Show the first ~200 characters of file body on cards |
+| Ignored files (comma-separated) | text | `*.base` | Comma-separated filename patterns (with `*` glob) to exclude from the board |
+| Column width | slider | 280 | Column width in pixels (180–500) |
+
+### Key features
+
+- **Drag-and-drop cards** between columns (moves files on disk via `vault.rename()`).
+- **Drag-and-drop columns** to reorder (persisted across sessions).
+- **Column color themes** via a color picker (8 Obsidian palette colors).
+- **Remove empty columns** with the `x` button on the column header.
+- **File ignore list** with glob pattern matching to hide files like `.base` definitions.
+- **Click cards** to open the note in a reused tab.
+- **Debounced rendering** (50ms) to handle rapid vault events efficiently.
+- **Incremental DOM patching** — after the initial render, subsequent updates surgically patch the DOM rather than rebuilding.
 
 ## Project overview
 
-- Target: Obsidian Community Plugin (TypeScript → bundled JavaScript).
-- Entry point: `main.ts` compiled to `main.js` and loaded by Obsidian.
-- Required release artifacts: `main.js`, `manifest.json`, and optional `styles.css`.
-- **CSS class prefix**: The plugin uses the `.obk-` prefix (Obsidian Bases Kanban) for all view UI classes; constants live in `src/constants.ts` (`CSS_CLASSES`). Use this prefix to avoid collisions with other plugins and themes.
+- Target: Obsidian Community Plugin (TypeScript bundled to JavaScript).
+- Entry point: `src/main.ts` compiled to `main.js` and loaded by Obsidian.
+- Required release artifacts: `main.js`, `manifest.json`, and `styles.css`.
+- **CSS class prefix**: `.fbk-` (Folder Based Kanban). All class names are defined in `src/constants.ts` (`CSS_CLASSES`).
+
+## File structure
+
+```
+src/
+  main.ts           # Plugin entry point — registers the Bases view (minimal)
+  kanbanView.ts     # FolderKanbanView class — rendering, drag-drop, settings, color picker
+  types.ts          # CardData, ColumnData interfaces
+  constants.ts      # CSS classes, color palette, sortable config, empty-state messages
+  utils/
+    debounce.ts     # Debounce utility
+```
 
 ## Environment & tooling
 
-- Node.js: version is managed via [nvm](https://github.com/nvm-sh/nvm); run `nvm use` to activate the version specified in `.nvmrc`.
-- **Package manager: npm** (required for this sample - `package.json` defines npm scripts and dependencies).
-- **Bundler: esbuild** (required for this sample - `esbuild.config.mjs` and build scripts depend on it). Alternative bundlers like Rollup or webpack are acceptable for other projects if they bundle all external dependencies into `main.js`.
-- Types: `obsidian` type definitions.
-
-**Note**: This sample project has specific technical dependencies on npm and esbuild. If you're creating a plugin from scratch, you can choose different tools, but you'll need to replace the build configuration accordingly.
+- Node.js version managed via `.nvmrc`; run `nvm use` to activate.
+- **Package manager**: npm.
+- **Bundler**: esbuild (`esbuild.config.mjs`).
+- **Types**: `obsidian` type definitions.
+- **Drag-and-drop**: SortableJS (`sortablejs` v1.15).
 
 ### Install
 
@@ -41,9 +77,15 @@ npm run dev
 npm run build
 ```
 
+### Tests
+
+```bash
+npm test
+```
+
 ## Linting and formatting
 
-ESLint handles linting; [Biome](https://biomejs.dev/) handles formatting. They are intentionally kept separate. Both are devDependencies — no global installs needed.
+ESLint handles linting; [Biome](https://biomejs.dev/) handles formatting. Both are devDependencies.
 
 | Script | Purpose |
 |---|---|
@@ -54,206 +96,64 @@ ESLint handles linting; [Biome](https://biomejs.dev/) handles formatting. They a
 
 A pre-commit hook (`.githooks/pre-commit`) runs `format:check` then `lint` automatically after `npm install` via the `prepare` script.
 
-## File & folder conventions
+## Coding conventions
 
-- **Organize code into multiple files**: Split functionality across separate modules rather than putting everything in `main.ts`.
-- Source lives in `src/`. Keep `main.ts` small and focused on plugin lifecycle (loading, unloading, registering commands).
-- **Example file structure**:
-  ```
-  src/
-    main.ts           # Plugin entry point, lifecycle management
-    kanbanView.ts     # Kanban view implementation
-    constants.ts      # CSS classes, configuration constants
-    utils/
-      grouping.ts    # Grouping logic for markers
-      debounce.ts    # Debounce utility for performance
-  ```
-- **Do not commit build artifacts**: Never commit `node_modules/`, `main.js`, or other generated files to version control.
-- Keep the plugin small. Avoid large dependencies. Prefer browser-compatible packages.
-- Generated output should be placed at the plugin root or `dist/` depending on your build setup. Release artifacts must end up at the top level of the plugin folder in the vault (`main.js`, `manifest.json`, `styles.css`).
+- TypeScript with `"strict": true`.
+- **Keep `main.ts` minimal**: only plugin lifecycle. All view logic lives in `kanbanView.ts`.
+- Bundle everything into `main.js` (no unbundled runtime deps).
+- Prefer `async/await` over promise chains.
+- Use the `.fbk-` CSS class prefix for all UI classes.
+- `isDesktopOnly` is `false` — avoid desktop-only APIs.
 
 ## Manifest rules (`manifest.json`)
 
-- Must include (non-exhaustive):  
-  - `id` (plugin ID; for local dev it should match the folder name)  
-  - `name`  
-  - `version` (Semantic Versioning `x.y.z`)  
-  - `minAppVersion`  
-  - `description`  
-  - `isDesktopOnly` (boolean)  
-  - Optional: `author`, `authorUrl`, `fundingUrl` (string or map)
-- Never change `id` after release. Treat it as stable API.
+- Must include: `id`, `name`, `version` (SemVer), `minAppVersion`, `description`, `isDesktopOnly`.
+- Never change `id` after release.
 - Keep `minAppVersion` accurate when using newer APIs.
-- Canonical requirements are coded here: https://github.com/obsidianmd/obsidian-releases/blob/master/.github/workflows/validate-plugin-entry.yml
 
 ## Testing
 
-- Manual install for testing: copy `main.js`, `manifest.json`, `styles.css` (if any) to:
-  ```
-  <Vault>/.obsidian/plugins/<plugin-id>/
-  ```
-- Reload Obsidian and enable the plugin in **Settings → Community plugins**.
-
-## Commands & settings
-
-- Any user-facing commands should be added via `this.addCommand(...)`.
-- If the plugin has configuration, provide a settings tab and sensible defaults.
-- Persist settings using `this.loadData()` / `this.saveData()`.
-- Use stable command IDs; avoid renaming once released.
+- Manual install: copy `main.js`, `manifest.json`, `styles.css` to `<Vault>/.obsidian/plugins/folder-kanban/`.
+- Reload Obsidian and enable in **Settings -> Community plugins**.
 
 ## Versioning & releases
 
-- Bump `version` in `manifest.json` and `package.json` (SemVer) and update `versions.json` to map plugin version → minimum app version.
-- Create a GitHub release whose tag exactly matches `manifest.json`'s `version`. Do not use a leading `v`.
-- Attach `manifest.json`, `main.js`, and `styles.css` (if present) to the release as individual assets.
-- After the initial release, follow the process to add/update your plugin in the community catalog as required.
+- Bump `version` in both `manifest.json` and `package.json` (SemVer).
+- Update `versions.json` to map plugin version to minimum app version.
+- Create a GitHub release whose tag exactly matches `manifest.json` version (no `v` prefix).
+- Attach `manifest.json`, `main.js`, and `styles.css` to the release.
 
-## Security, privacy, and compliance
+## Security & privacy
 
-Follow Obsidian's **Developer Policies** and **Plugin Guidelines**. In particular:
-
-- Default to local/offline operation. Only make network requests when essential to the feature.
-- No hidden telemetry. If you collect optional analytics or call third-party services, require explicit opt-in and document clearly in `README.md` and in settings.
-- Never execute remote code, fetch and eval scripts, or auto-update plugin code outside of normal releases.
-- Minimize scope: read/write only what's necessary inside the vault. Do not access files outside the vault.
-- Clearly disclose any external services used, data sent, and risks.
-- Respect user privacy. Do not collect vault contents, filenames, or personal information unless absolutely necessary and explicitly consented.
-- Avoid deceptive patterns, ads, or spammy notifications.
-- Register and clean up all DOM, app, and interval listeners using the provided `register*` helpers so the plugin unloads safely.
-
-## UX & copy guidelines (for UI text, commands, settings)
-
-- Prefer sentence case for headings, buttons, and titles.
-- Use clear, action-oriented imperatives in step-by-step copy.
-- Use **bold** to indicate literal UI labels. Prefer "select" for interactions.
-- Use arrow notation for navigation: **Settings → Community plugins**.
-- Keep in-app strings short, consistent, and free of jargon.
+- Fully local/offline — no network requests.
+- No telemetry.
+- Only reads/writes files within the vault.
+- All DOM and event listeners are cleaned up in `onClose()`.
 
 ## Performance
 
-- Keep startup light. Defer heavy work until needed.
-- Avoid long-running tasks during `onload`; use lazy initialization.
-- Batch disk access and avoid excessive vault scans.
-- Debounce/throttle expensive operations in response to file system events.
-
-## Coding conventions
-
-- TypeScript with `"strict": true` preferred.
-- **Keep `main.ts` minimal**: Focus only on plugin lifecycle (onload, onunload, addCommand calls). Delegate all feature logic to separate modules.
-- **Split large files**: If any file exceeds ~200-300 lines, consider breaking it into smaller, focused modules.
-- **Use clear module boundaries**: Each file should have a single, well-defined responsibility.
-- Bundle everything into `main.js` (no unbundled runtime deps).
-- Avoid Node/Electron APIs if you want mobile compatibility; set `isDesktopOnly` accordingly.
-- Prefer `async/await` over promise chains; handle errors gracefully.
-
-## Mobile
-
-- Where feasible, test on iOS and Android.
-- Don't assume desktop-only behavior unless `isDesktopOnly` is `true`.
-- Avoid large in-memory structures; be mindful of memory and storage constraints.
+- Startup is lightweight — the view only renders when data arrives from the Bases query controller.
+- Rendering is debounced at 50ms.
+- After initial render, the DOM is patched incrementally (add/remove/reorder) rather than rebuilt.
+- File content for previews is loaded via `vault.cachedRead()` (async, batched).
 
 ## Agent do/don't
 
 **Do**
-- Add commands with stable IDs (don't rename once released).
-- Provide defaults and validation in settings.
-- Write idempotent code paths so reload/unload doesn't leak listeners or intervals.
-- Use `this.register*` helpers for everything that needs cleanup.
+- Keep `main.ts` minimal (lifecycle only).
+- Use the `CSS_CLASSES` constants from `constants.ts` for all class names.
+- Register and clean up all listeners.
+- Provide sensible defaults for all settings.
 
 **Don't**
-- Introduce network calls without an obvious user-facing reason and documentation.
-- Ship features that require cloud services without clear disclosure and explicit opt-in.
-- Store or transmit vault contents unless essential and consented.
-
-## Common tasks
-
-### Organize code across multiple files
-
-**main.ts** (minimal, lifecycle only):
-```ts
-import { Plugin } from "obsidian";
-import { MySettings, DEFAULT_SETTINGS } from "./settings";
-import { registerCommands } from "./commands";
-
-export default class MyPlugin extends Plugin {
-  settings: MySettings;
-
-  async onload() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-    registerCommands(this);
-  }
-}
-```
-
-**settings.ts**:
-```ts
-export interface MySettings {
-  enabled: boolean;
-  apiKey: string;
-}
-
-export const DEFAULT_SETTINGS: MySettings = {
-  enabled: true,
-  apiKey: "",
-};
-```
-
-**commands/index.ts**:
-```ts
-import { Plugin } from "obsidian";
-import { doSomething } from "./my-command";
-
-export function registerCommands(plugin: Plugin) {
-  plugin.addCommand({
-    id: "do-something",
-    name: "Do something",
-    callback: () => doSomething(plugin),
-  });
-}
-```
-
-### Add a command
-
-```ts
-this.addCommand({
-  id: "your-command-id",
-  name: "Do the thing",
-  callback: () => this.doTheThing(),
-});
-```
-
-### Persist settings
-
-```ts
-interface MySettings { enabled: boolean }
-const DEFAULT_SETTINGS: MySettings = { enabled: true };
-
-async onload() {
-  this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-  await this.saveData(this.settings);
-}
-```
-
-### Register listeners safely
-
-```ts
-this.registerEvent(this.app.workspace.on("file-open", f => { /* ... */ }));
-this.registerDomEvent(window, "resize", () => { /* ... */ });
-this.registerInterval(window.setInterval(() => { /* ... */ }, 1000));
-```
-
-## Troubleshooting
-
-- Plugin doesn't load after build: ensure `main.js` and `manifest.json` are at the top level of the plugin folder under `<Vault>/.obsidian/plugins/<plugin-id>/`. 
-- Build issues: if `main.js` is missing, run `npm run build` or `npm run dev` to compile your TypeScript source code.
-- Commands not appearing: verify `addCommand` runs after `onload` and IDs are unique.
-- Settings not persisting: ensure `loadData`/`saveData` are awaited and you re-render the UI after changes.
-- Mobile-only issues: confirm you're not using desktop-only APIs; check `isDesktopOnly` and adjust.
+- Add network calls without clear justification.
+- Commit build artifacts (`main.js`, `node_modules/`).
+- Use desktop-only APIs (plugin supports mobile).
+- Add large dependencies.
 
 ## References
 
-- Obsidian sample plugin: https://github.com/obsidianmd/obsidian-sample-plugin
-- API documentation: https://docs.obsidian.md
+- Obsidian API: https://docs.obsidian.md
 - Developer policies: https://docs.obsidian.md/Developer+policies
 - Plugin guidelines: https://docs.obsidian.md/Plugins/Releasing/Plugin+guidelines
-- Style guide: https://help.obsidian.md/style-guide
+- Obsidian style guide: https://help.obsidian.md/style-guide
