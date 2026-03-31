@@ -47,6 +47,21 @@ function extractPreview(content: string, maxLen = 200): string {
  * Entries directly in rootFolder go to "Unsorted".
  * Entries outside rootFolder are ignored.
  */
+/**
+ * Check whether a filename matches any pattern in the ignore list.
+ * Supports simple glob patterns with `*` as wildcard.
+ */
+function matchesIgnorePattern(fileName: string, patterns: string[]): boolean {
+	for (const pattern of patterns) {
+		const trimmed = pattern.trim();
+		if (!trimmed) continue;
+		// Convert simple glob to regex: escape special chars, replace * with .*
+		const escaped = trimmed.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+		if (new RegExp(`^${escaped}$`, 'i').test(fileName)) return true;
+	}
+	return false;
+}
+
 function groupEntriesByFolder(
 	entries: BasesEntry[],
 	rootFolder: string,
@@ -55,14 +70,17 @@ function groupEntriesByFolder(
 		fileContents?: Map<string, string>;
 		showTags?: boolean;
 		showPreview?: boolean;
+		ignoredFiles?: string[];
 	},
 ): Map<string, { col: ColumnData; entries: BasesEntry[] }> {
 	const groups = new Map<string, { col: ColumnData; entries: BasesEntry[] }>();
 	const prefix = rootFolder + '/';
+	const ignorePatterns = options?.ignoredFiles ?? [];
 
 	for (const entry of entries) {
 		const path = entry.file.path;
 		if (!path.startsWith(prefix)) continue;
+		if (ignorePatterns.length > 0 && matchesIgnorePattern(entry.file.name, ignorePatterns)) continue;
 
 		const relative = path.slice(prefix.length);
 		const slashIdx = relative.indexOf('/');
@@ -219,11 +237,20 @@ export class FolderKanbanView extends BasesView {
 			}
 
 			const showTags = this.config?.get('showTags') !== false;
+			const rawIgnored: unknown = this.config?.get('ignoredFiles');
+			const ignoredFiles =
+				typeof rawIgnored === 'string'
+					? rawIgnored
+							.split(',')
+							.map((s) => s.trim())
+							.filter(Boolean)
+					: [];
 			const groups = groupEntriesByFolder(entries, rootFolder, {
 				metadataCache: showTags ? this.app?.metadataCache : undefined,
 				fileContents: showPreview ? fileContents : undefined,
 				showTags,
 				showPreview,
+				ignoredFiles,
 			});
 
 			// Ensure all actual subfolders of the root appear as columns, even if empty
@@ -882,6 +909,13 @@ export class FolderKanbanView extends BasesView {
 				type: 'toggle',
 				key: 'showPreview',
 				default: true,
+			},
+			{
+				displayName: 'Ignored files',
+				type: 'text',
+				key: 'ignoredFiles',
+				default: '*.base',
+				placeholder: 'e.g. *.base, template.md',
 			},
 			{
 				displayName: 'Column width',
