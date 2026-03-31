@@ -15,6 +15,64 @@ import type { CardData, ColumnData } from './types.ts';
 import type { DebouncedFn } from './utils/debounce.ts';
 import { debounce } from './utils/debounce.ts';
 
+/** Extensions that are binary / non-text and should never be read for a text preview. */
+const BINARY_EXTENSIONS = new Set([
+	// Images
+	'png',
+	'jpg',
+	'jpeg',
+	'gif',
+	'bmp',
+	'svg',
+	'webp',
+	'ico',
+	'tif',
+	'tiff',
+	'avif',
+	// Audio
+	'mp3',
+	'wav',
+	'ogg',
+	'flac',
+	'm4a',
+	'aac',
+	'wma',
+	// Video
+	'mp4',
+	'webm',
+	'mkv',
+	'avi',
+	'mov',
+	'wmv',
+	// Documents / archives
+	'pdf',
+	'doc',
+	'docx',
+	'xls',
+	'xlsx',
+	'ppt',
+	'pptx',
+	'zip',
+	'gz',
+	'tar',
+	'rar',
+	'7z',
+	// Other binary
+	'exe',
+	'dll',
+	'bin',
+	'dat',
+	'db',
+	'sqlite',
+]);
+
+/** Format a byte count as a human-readable string (e.g. "1.2 MB"). */
+function formatFileSize(bytes: number): string {
+	if (bytes < 1024) return `${bytes} B`;
+	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 /** Extract the first ~200 chars of body text, stripping frontmatter and headings. */
 function extractPreview(content: string, maxLen = 200): string {
 	let start = 0;
@@ -105,8 +163,15 @@ function groupEntriesByFolder(
 			const cache = options.metadataCache.getFileCache(entry.file);
 			if (cache) tags = getAllTags(cache) ?? [];
 		}
-		const preview =
-			options?.showPreview !== false && options?.fileContents ? extractPreview(options.fileContents.get(path) ?? '') : '';
+		let preview = '';
+		if (options?.showPreview !== false) {
+			const ext = entry.file.extension.toLowerCase();
+			if (BINARY_EXTENSIONS.has(ext)) {
+				preview = `${ext.toUpperCase()} file, ${formatFileSize(entry.file.stat.size)}`;
+			} else if (options?.fileContents) {
+				preview = extractPreview(options.fileContents.get(path) ?? '');
+			}
+		}
 
 		const group = groups.get(folderName);
 		if (group) {
@@ -225,6 +290,7 @@ export class FolderKanbanView extends BasesView {
 			if (showPreview && this.app?.vault) {
 				const reads = entries.map(async (e) => {
 					try {
+						if (BINARY_EXTENSIONS.has(e.file.extension.toLowerCase())) return;
 						const vault = this.app?.vault;
 						if (!vault) return;
 						const content = await vault.cachedRead(e.file);
