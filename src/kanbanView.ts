@@ -911,7 +911,7 @@ export class FolderKanbanView extends BasesView {
 				default: true,
 			},
 			{
-				displayName: 'Ignored files',
+				displayName: 'Ignored files (comma-separated)',
 				type: 'text',
 				key: 'ignoredFiles',
 				default: '*.base',
